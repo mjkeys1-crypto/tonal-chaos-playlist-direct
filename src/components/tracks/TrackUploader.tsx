@@ -55,6 +55,7 @@ export default function TrackUploader({ onComplete, onClose }: Props) {
       }
     }
     onComplete()
+    onClose()
   }
 
   const removeItem = (idx: number) => {
