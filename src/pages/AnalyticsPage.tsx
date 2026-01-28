@@ -1,8 +1,25 @@
-import { useEffect, useState } from 'react'
-import { BarChart3, Loader2, Eye, Play, Download } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { BarChart3, Loader2, Eye, Play, Download, Check, X as XIcon } from 'lucide-react'
 import { getOverviewStats, getPageViews, getRecentPlays, getRecentDownloads } from '../lib/api/analytics'
 
 type Tab = 'views' | 'plays' | 'downloads'
+
+interface VisitorActivity {
+  email: string | null
+  shareLabel: string
+  shareSlug: string
+  shareId: string
+  playlistId: string | null
+  playlistTitle: string | null
+  visitedAt: string
+  played: boolean
+  downloaded: boolean
+  playCount: number
+  downloadCount: number
+  playedTracks: string[]
+  downloadedTracks: string[]
+}
 
 export default function AnalyticsPage() {
   const [tab, setTab] = useState<Tab>('views')
@@ -27,6 +44,95 @@ export default function AnalyticsPage() {
       setDownloads(d)
     }).finally(() => setLoading(false))
   }, [])
+
+  // Aggregate visitor activity - combine views with play/download status
+  const visitorActivity = useMemo<VisitorActivity[]>(() => {
+    // Build lookup of emails by share_id from plays/downloads
+    const emailsByShareId = new Map<string, Set<string>>()
+    for (const p of plays) {
+      if (p.share_id && p.listener_email) {
+        if (!emailsByShareId.has(p.share_id)) emailsByShareId.set(p.share_id, new Set())
+        emailsByShareId.get(p.share_id)!.add(p.listener_email)
+      }
+    }
+    for (const d of downloads) {
+      if (d.share_id && d.listener_email) {
+        if (!emailsByShareId.has(d.share_id)) emailsByShareId.set(d.share_id, new Set())
+        emailsByShareId.get(d.share_id)!.add(d.listener_email)
+      }
+    }
+
+    // Group plays by share_id + email, collecting track titles
+    const playsByVisitor = new Map<string, { count: number; tracks: string[] }>()
+    for (const p of plays) {
+      const key = `${p.share_id || 'none'}_${p.listener_email || 'anonymous'}`
+      const existing = playsByVisitor.get(key) || { count: 0, tracks: [] }
+      existing.count++
+      const trackTitle = (p.track as any)?.title
+      if (trackTitle && !existing.tracks.includes(trackTitle)) {
+        existing.tracks.push(trackTitle)
+      }
+      playsByVisitor.set(key, existing)
+    }
+
+    // Group downloads by share_id + email, collecting track titles
+    const downloadsByVisitor = new Map<string, { count: number; tracks: string[] }>()
+    for (const d of downloads) {
+      const key = `${d.share_id || 'none'}_${d.listener_email || 'anonymous'}`
+      const existing = downloadsByVisitor.get(key) || { count: 0, tracks: [] }
+      existing.count++
+      const trackTitle = (d.track as any)?.title
+      if (trackTitle && !existing.tracks.includes(trackTitle)) {
+        existing.tracks.push(trackTitle)
+      }
+      downloadsByVisitor.set(key, existing)
+    }
+
+    // Build unified activity from views, deduplicating by visitor (email + share)
+    // Keep only the most recent view per visitor/share combination
+    const visitorMap = new Map<string, VisitorActivity>()
+
+    for (const v of views) {
+      const shareId = v.share_link_id || 'none'
+      // Get email from page_view metadata, or fallback to emails found in plays/downloads for this share
+      let email = v.metadata?.listener_email || null
+      if (!email && shareId !== 'none') {
+        const shareEmails = emailsByShareId.get(shareId)
+        if (shareEmails && shareEmails.size === 1) {
+          // If there's exactly one email for this share, use it
+          email = Array.from(shareEmails)[0]
+        }
+      }
+
+      const key = `${shareId}_${email || 'anonymous'}`
+      const playData = playsByVisitor.get(key) || { count: 0, tracks: [] }
+      const downloadData = downloadsByVisitor.get(key) || { count: 0, tracks: [] }
+
+      const activity: VisitorActivity = {
+        email,
+        shareLabel: v.share_link?.label || v.share_link?.slug || '—',
+        shareSlug: v.share_link?.slug || '',
+        shareId,
+        playlistId: v.share_link?.playlist_id || null,
+        playlistTitle: v.share_link?.playlist?.title || null,
+        visitedAt: v.created_at,
+        played: playData.count > 0,
+        downloaded: downloadData.count > 0,
+        playCount: playData.count,
+        downloadCount: downloadData.count,
+        playedTracks: playData.tracks,
+        downloadedTracks: downloadData.tracks,
+      }
+
+      // Only keep the most recent view for each visitor/share combination
+      // Views are already sorted by created_at desc, so first occurrence wins
+      if (!visitorMap.has(key)) {
+        visitorMap.set(key, activity)
+      }
+    }
+
+    return Array.from(visitorMap.values())
+  }, [views, plays, downloads])
 
   if (loading) {
     return (
@@ -68,17 +174,83 @@ export default function AnalyticsPage() {
 
       {/* Tab content */}
       {tab === 'views' && (
-        views.length === 0 ? (
+        visitorActivity.length === 0 ? (
           <EmptyState message="No page views recorded yet." />
         ) : (
-          <Table
-            headers={['Share Link', 'User Agent', 'When']}
-            rows={views.map(v => [
-              getShareLabel(v),
-              truncateUA(v.metadata?.user_agent),
-              formatDate(v.created_at),
-            ])}
-          />
+          <div className="border border-zinc-800 rounded-lg overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="text-xs text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
+                  <th className="px-4 py-3 text-left">Visitor</th>
+                  <th className="px-4 py-3 text-left">Share Link</th>
+                  <th className="px-4 py-3 text-center">Played</th>
+                  <th className="px-4 py-3 text-center">Downloaded</th>
+                  <th className="px-4 py-3 text-left">When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visitorActivity.map((v, i) => (
+                  <tr key={i} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                    <td className="px-4 py-2.5 text-sm">
+                      {v.email ? (
+                        <span className="text-indigo-400">{v.email}</span>
+                      ) : (
+                        <span className="text-zinc-600">Anonymous</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm truncate max-w-xs">
+                      {v.playlistId ? (
+                        <Link to={`/playlists/${v.playlistId}`} className="text-indigo-400 hover:text-indigo-300 hover:underline">
+                          {v.shareLabel}
+                        </Link>
+                      ) : (
+                        v.shareLabel
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {v.played ? (
+                        <span className="relative group inline-flex items-center gap-1 text-green-400 text-xs cursor-help">
+                          <Check size={14} />
+                          {v.playCount > 1 && <span>({v.playCount})</span>}
+                          {v.playedTracks.length > 0 && (
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-100 z-50 whitespace-nowrap text-left">
+                              <p className="text-zinc-400 text-[10px] uppercase tracking-wide mb-1">Played</p>
+                              {v.playedTracks.map((t, idx) => (
+                                <p key={idx} className="text-zinc-200 text-xs">{t}</p>
+                              ))}
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-700" />
+                            </div>
+                          )}
+                        </span>
+                      ) : (
+                        <XIcon size={14} className="mx-auto text-zinc-700" />
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {v.downloaded ? (
+                        <span className="relative group inline-flex items-center gap-1 text-green-400 text-xs cursor-help">
+                          <Check size={14} />
+                          {v.downloadCount > 1 && <span>({v.downloadCount})</span>}
+                          {v.downloadedTracks.length > 0 && (
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity duration-100 z-50 whitespace-nowrap text-left">
+                              <p className="text-zinc-400 text-[10px] uppercase tracking-wide mb-1">Downloaded</p>
+                              {v.downloadedTracks.map((t, idx) => (
+                                <p key={idx} className="text-zinc-200 text-xs">{t}</p>
+                              ))}
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-700" />
+                            </div>
+                          )}
+                        </span>
+                      ) : (
+                        <XIcon size={14} className="mx-auto text-zinc-700" />
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-zinc-500">{formatDate(v.visitedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )
       )}
 
@@ -87,11 +259,11 @@ export default function AnalyticsPage() {
           <EmptyState message="No plays recorded yet." />
         ) : (
           <Table
-            headers={['Track', 'Share Link', 'User Agent', 'When']}
+            headers={['Track', 'Listener', 'Share Link', 'When']}
             rows={plays.map(p => [
               (p.track as any)?.title || 'Unknown',
+              p.listener_email || '—',
               getShareLabel(p),
-              truncateUA(p.user_agent),
               formatDate(p.created_at),
             ])}
           />
@@ -103,11 +275,11 @@ export default function AnalyticsPage() {
           <EmptyState message="No downloads recorded yet." />
         ) : (
           <Table
-            headers={['Track', 'Share Link', 'User Agent', 'When']}
+            headers={['Track', 'Listener', 'Share Link', 'When']}
             rows={downloads.map(d => [
               (d.track as any)?.title || 'Unknown',
+              d.listener_email || '—',
               getShareLabel(d),
-              truncateUA(d.user_agent),
               formatDate(d.created_at),
             ])}
           />
@@ -115,12 +287,6 @@ export default function AnalyticsPage() {
       )}
     </div>
   )
-}
-
-function truncateUA(ua: string | null) {
-  if (!ua) return '—'
-  if (ua.length <= 60) return ua
-  return ua.slice(0, 60) + '...'
 }
 
 function EmptyState({ message }: { message: string }) {

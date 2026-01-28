@@ -50,7 +50,7 @@ export async function getPlaysByTrack() {
 export async function getPageViews(limit = 50) {
   const { data, error } = await supabase
     .from('analytics_events')
-    .select('*, share_link:share_links(slug, label)')
+    .select('*, share_link:share_links(slug, label, playlist_id, playlist:playlists(title))')
     .eq('event_type', 'page_view')
     .order('created_at', { ascending: false })
     .limit(limit)

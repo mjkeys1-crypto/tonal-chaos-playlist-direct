@@ -14,6 +14,8 @@ export async function listSharesForPlaylist(playlistId: string): Promise<Share[]
 export async function createShare(playlistId: string, opts: {
   label: string
   allowDownload?: boolean
+  requireEmail?: boolean
+  recipientEmail?: string | null
   passwordHash?: string | null
   expiresAt?: string | null
 }): Promise<Share> {
@@ -25,6 +27,8 @@ export async function createShare(playlistId: string, opts: {
       slug,
       label: opts.label,
       allow_download: opts.allowDownload ?? false,
+      require_email: opts.requireEmail ?? false,
+      recipient_email: opts.recipientEmail ?? null,
       password_hash: opts.passwordHash ?? null,
       expires_at: opts.expiresAt ?? null,
       is_active: true,

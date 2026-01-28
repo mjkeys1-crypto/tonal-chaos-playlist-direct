@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown, Music, Info, X } from 'lucide-react'
+import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown, Music, Info, X, Mail } from 'lucide-react'
 import WaveSurfer from 'wavesurfer.js'
 import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
@@ -29,6 +29,8 @@ interface ShareData {
   id: string
   slug: string
   allow_download: boolean
+  require_email: boolean
+  recipient_email: string | null
   password_hash: string | null
   expires_at: string | null
   playlist: Playlist
@@ -47,6 +49,11 @@ export default function SharedPlaylist() {
   const [needsPassword, setNeedsPassword] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordError, setPasswordError] = useState('')
+
+  // Email gate
+  const [needsEmail, setNeedsEmail] = useState(false)
+  const [emailInput, setEmailInput] = useState('')
+  const [listenerEmail, setListenerEmail] = useState<string | null>(null)
 
   // Player
   const [playingTrack, setPlayingTrack] = useState<Track | null>(null)
@@ -85,6 +92,20 @@ export default function SharedPlaylist() {
         return
       }
 
+      // If recipient_email is pre-set, use it for tracking (skip email gate)
+      if (data.recipient_email) {
+        setListenerEmail(data.recipient_email)
+        await loadPlaylistData(data, data.recipient_email)
+        return
+      }
+
+      if (data.require_email) {
+        setShare(data)
+        setNeedsEmail(true)
+        setLoading(false)
+        return
+      }
+
       await loadPlaylistData(data)
     } catch (err: any) {
       setError(err.message || 'Something went wrong')
@@ -92,7 +113,7 @@ export default function SharedPlaylist() {
     }
   }
 
-  const loadPlaylistData = async (shareData: ShareData) => {
+  const loadPlaylistData = async (shareData: ShareData, email?: string) => {
     const playlistId = shareData.playlist.id
     const [secs, pts] = await Promise.all([
       supabase.from('sections').select('*').eq('playlist_id', playlistId).order('position'),
@@ -122,7 +143,7 @@ export default function SharedPlaylist() {
     supabase.from('analytics_events').insert({
       event_type: 'page_view',
       share_link_id: shareData.id,
-      metadata: { user_agent: navigator.userAgent },
+      metadata: { user_agent: navigator.userAgent, listener_email: email || null },
     }).then(() => {})
   }
 
@@ -133,8 +154,33 @@ export default function SharedPlaylist() {
       setPasswordError('Incorrect password')
       return
     }
+    setNeedsPassword(false)
+
+    // If recipient_email is pre-set, use it for tracking
+    if (share.recipient_email) {
+      setListenerEmail(share.recipient_email)
+      setLoading(true)
+      await loadPlaylistData(share, share.recipient_email)
+      return
+    }
+
+    // After password, check if email is also required
+    if (share.require_email) {
+      setNeedsEmail(true)
+      return
+    }
     setLoading(true)
     await loadPlaylistData(share)
+  }
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!share || !emailInput.trim()) return
+    const email = emailInput.trim()
+    setListenerEmail(email)
+    setNeedsEmail(false)
+    setLoading(true)
+    await loadPlaylistData(share, email)
   }
 
   const destroyWaveSurfer = useCallback(() => {
@@ -235,6 +281,7 @@ export default function SharedPlaylist() {
     supabase.from('play_events').insert({
       track_id: track.id,
       share_id: share?.id,
+      listener_email: listenerEmail,
       user_agent: navigator.userAgent,
     }).then(() => {})
   }
@@ -259,6 +306,7 @@ export default function SharedPlaylist() {
     supabase.from('download_events').insert({
       track_id: track.id,
       share_id: share?.id,
+      listener_email: listenerEmail,
       user_agent: navigator.userAgent,
     }).then(() => {})
   }
@@ -345,6 +393,34 @@ export default function SharedPlaylist() {
               placeholder="Enter password"
               className="w-full bg-zinc-900/80 border border-zinc-700/50 rounded-xl px-4 py-3 text-white text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 backdrop-blur-sm"
               autoFocus
+            />
+            <button className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-xl transition-colors">
+              Continue
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  if (needsEmail) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4 relative">
+        <AnimatedOrbs />
+        <div className="w-full max-w-sm text-center relative z-10">
+          <img src="/logo.png" alt="Tonal Chaos" className="w-20 h-20 mx-auto mb-6 object-contain" />
+          <Mail className="mx-auto mb-4 text-zinc-500" size={32} />
+          <h1 className="text-xl font-bold text-white mb-2">Enter Your Email</h1>
+          <p className="text-sm text-zinc-400 mb-6">Please enter your email to access this playlist.</p>
+          <form onSubmit={handleEmailSubmit} className="space-y-4">
+            <input
+              type="email"
+              value={emailInput}
+              onChange={e => setEmailInput(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full bg-zinc-900/80 border border-zinc-700/50 rounded-xl px-4 py-3 text-white text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 backdrop-blur-sm"
+              autoFocus
+              required
             />
             <button className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-xl transition-colors">
               Continue

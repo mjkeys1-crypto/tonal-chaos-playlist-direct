@@ -70,6 +70,8 @@ export interface Share {
   access_mode: 'link' | 'email_verified'
   password_hash: string | null
   allow_download: boolean
+  require_email: boolean
+  recipient_email: string | null
   expires_at: string | null
   is_active: boolean
   created_at: string

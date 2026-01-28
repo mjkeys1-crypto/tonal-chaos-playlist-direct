@@ -12,7 +12,9 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
   const [shares, setShares] = useState<Share[]>([])
   const [, setLoading] = useState(true)
   const [label, setLabel] = useState('')
+  const [recipientEmail, setRecipientEmail] = useState('')
   const [allowDownload, setAllowDownload] = useState(false)
+  const [requireEmail, setRequireEmail] = useState(false)
   const [password, setPassword] = useState('')
   const [expiryDays, setExpiryDays] = useState('')
   const [creating, setCreating] = useState(false)
@@ -35,13 +37,17 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
       await createShare(playlistId, {
         label: label.trim(),
         allowDownload,
+        requireEmail: requireEmail && !recipientEmail.trim(), // Don't require email if pre-associated
+        recipientEmail: recipientEmail.trim() || null,
         passwordHash: password || null,
         expiresAt,
       })
       setLabel('')
+      setRecipientEmail('')
       setPassword('')
       setExpiryDays('')
       setAllowDownload(false)
+      setRequireEmail(false)
       loadShares()
     } finally {
       setCreating(false)
@@ -89,10 +95,33 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
                 required
               />
             </div>
+            <div>
+              <label className="text-xs text-zinc-500 mb-1 block">Recipient Email (optional)</label>
+              <input
+                type="email"
+                value={recipientEmail}
+                onChange={e => setRecipientEmail(e.target.value)}
+                placeholder="client@company.com"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <p className="text-xs text-zinc-600 mt-1">Pre-associate this link with an email for automatic tracking</p>
+            </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Allow downloads</span>
               <button onClick={() => setAllowDownload(!allowDownload)}>
                 {allowDownload
+                  ? <ToggleRight size={24} className="text-indigo-400" />
+                  : <ToggleLeft size={24} className="text-zinc-600" />
+                }
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm text-zinc-400">Require email to view</span>
+                <p className="text-xs text-zinc-600">Visitor must enter email before accessing playlist</p>
+              </div>
+              <button onClick={() => setRequireEmail(!requireEmail)}>
+                {requireEmail
                   ? <ToggleRight size={24} className="text-indigo-400" />
                   : <ToggleLeft size={24} className="text-zinc-600" />
                 }
@@ -136,10 +165,12 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
                   <Link size={14} className={share.is_active ? 'text-green-400' : 'text-zinc-600'} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{share.label || share.slug}</p>
-                    <div className="flex gap-3 text-xs text-zinc-500 mt-0.5">
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-zinc-500 mt-0.5">
                       <span className="font-mono">/s/{share.slug}</span>
+                      {share.recipient_email && <span className="text-green-400">{share.recipient_email}</span>}
                       {share.password_hash && <span>Password</span>}
                       {share.allow_download && <span>Downloads</span>}
+                      {share.require_email && <span className="text-indigo-400">Email Gate</span>}
                       {share.expires_at && (
                         <span>Exp: {new Date(share.expires_at).toLocaleDateString()}</span>
                       )}

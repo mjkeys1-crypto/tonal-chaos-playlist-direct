@@ -101,7 +101,8 @@ export default function TrackUploader({ onComplete, onClose, initialFiles }: Pro
           >
             <Upload className="mx-auto mb-3 text-zinc-500" size={32} />
             <p className="text-sm text-zinc-300">Drop audio files here or click to browse</p>
-            <p className="text-xs text-zinc-500 mt-1">WAV, MP3, AIFF, FLAC, M4A</p>
+            <p className="text-xs text-zinc-500 mt-1">MP3, AIFF, FLAC, M4A, WAV</p>
+            <p className="text-xs text-amber-400 mt-2 font-medium">MP3 & AIFF recommended — metadata is preserved</p>
           </div>
 
           {/* File list */}

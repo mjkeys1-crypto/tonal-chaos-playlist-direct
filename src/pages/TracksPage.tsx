@@ -279,7 +279,8 @@ export default function TracksPage() {
         <div className="absolute inset-0 z-40 bg-zinc-900/90 border-2 border-dashed border-indigo-500 rounded-xl flex flex-col items-center justify-center pointer-events-none">
           <Upload className="text-indigo-400 mb-4" size={64} />
           <p className="text-xl font-semibold text-white">Drop audio files to upload</p>
-          <p className="text-sm text-zinc-400 mt-2">WAV, MP3, AIFF, FLAC, M4A</p>
+          <p className="text-sm text-zinc-400 mt-2">MP3, AIFF, FLAC, M4A, WAV</p>
+          <p className="text-sm text-amber-400 mt-1 font-medium">MP3 & AIFF recommended — metadata is preserved</p>
         </div>
       )}
 

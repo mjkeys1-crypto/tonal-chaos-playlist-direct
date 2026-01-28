@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Plus, ListMusic, Loader2, Copy, Trash2, Music, GripVertical, ChevronDown, ChevronRight, Share2, Library, X, Upload, Pencil, Play, Pause } from 'lucide-react'
+import { Plus, ListMusic, Loader2, Copy, Trash2, Music, GripVertical, ChevronDown, ChevronRight, ChevronUp, Share2, Library, X, Upload, Pencil, Play, Pause } from 'lucide-react'
 import { listPlaylists, createPlaylist, duplicatePlaylist, deletePlaylist, getArtworkUrl, getPlaylist, listSections, listPlaylistTracks, createSection, deleteSection, addTrackToPlaylist, removeTrackFromPlaylist, updatePlaylist, reorderPlaylistTracks, updateSection, uploadPlaylistArtwork } from '../lib/api/playlists'
 import { listTracks, getSignedUrl, uploadTrack, getTrackArtworkUrl } from '../lib/api/tracks'
 import { useAuth } from '../context/AuthContext'
@@ -85,9 +85,9 @@ function SortableTrackRow({
   )
 }
 
-// ─── Sortable Section Header ───
-function SortableSectionHeader({
-  section, trackCount, expanded, onToggle, onDelete, onRename, listeners, attributes,
+// ─── Sortable Section Wrapper ───
+function SortableSection({
+  section, trackCount, expanded, onToggle, onDelete, onRename, onMoveUp, onMoveDown, isFirst, isLast, children,
 }: {
   section: Section
   trackCount: number
@@ -95,6 +95,56 @@ function SortableSectionHeader({
   onToggle: () => void
   onDelete: () => void
   onRename: (title: string, emoji: string | null) => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  isFirst: boolean
+  isLast: boolean
+  children?: React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: `section-${section.id}`,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className="border border-zinc-800 rounded-lg overflow-hidden">
+      <SortableSectionHeader
+        section={section}
+        trackCount={trackCount}
+        expanded={expanded}
+        onToggle={onToggle}
+        onDelete={onDelete}
+        onRename={onRename}
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        isFirst={isFirst}
+        isLast={isLast}
+        listeners={listeners}
+        attributes={attributes}
+      />
+      {children}
+    </div>
+  )
+}
+
+// ─── Sortable Section Header ───
+function SortableSectionHeader({
+  section, trackCount, expanded, onToggle, onDelete, onRename, onMoveUp, onMoveDown, isFirst, isLast, listeners, attributes,
+}: {
+  section: Section
+  trackCount: number
+  expanded: boolean
+  onToggle: () => void
+  onDelete: () => void
+  onRename: (title: string, emoji: string | null) => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  isFirst: boolean
+  isLast: boolean
   listeners: any
   attributes: any
 }) {
@@ -132,8 +182,26 @@ function SortableSectionHeader({
   }
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors group">
-      <button {...attributes} {...listeners} className="touch-none text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded hover:bg-zinc-700/50">
+    <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors group">
+      <div className="flex flex-col -my-1">
+        <button
+          onClick={onMoveUp}
+          disabled={isFirst}
+          className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed p-0.5 rounded hover:bg-zinc-700/50 transition-colors"
+          title="Move up"
+        >
+          <ChevronUp size={14} />
+        </button>
+        <button
+          onClick={onMoveDown}
+          disabled={isLast}
+          className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed p-0.5 rounded hover:bg-zinc-700/50 transition-colors"
+          title="Move down"
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
+      <button {...attributes} {...listeners} className="touch-none text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing p-1 rounded hover:bg-zinc-700/50">
         <GripVertical size={16} />
       </button>
       <button onClick={onToggle} className="flex items-center gap-3 flex-1 text-left">
@@ -187,17 +255,78 @@ function PlaylistDetailPanel({
   const [newSectionEmoji, setNewSectionEmoji] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [editingClient, setEditingClient] = useState(false)
+  const [clientDraft, setClientDraft] = useState('')
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionDraft, setDescriptionDraft] = useState('')
   const [showShare, setShowShare] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
   const [libraryTarget, setLibraryTarget] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [libraryDragOver, setLibraryDragOver] = useState(false)
+  const [libraryUploading, setLibraryUploading] = useState(false)
   const [artworkUrl, setArtworkUrl] = useState<string | null>(null)
   const [uploadingArtwork, setUploadingArtwork] = useState(false)
   const [trackArtworkUrls, setTrackArtworkUrls] = useState<Record<string, string>>({})
-  const [unsectionedLabel, setUnsectionedLabel] = useState('Unsectioned')
+  const [unsectionedLabel, setUnsectionedLabelState] = useState('Unsectioned')
   const [editingUnsectioned, setEditingUnsectioned] = useState(false)
   const [unsectionedDraft, setUnsectionedDraft] = useState('')
+
+  // Load unsectioned label from localStorage on mount
+  useEffect(() => {
+    if (playlistId) {
+      const saved = localStorage.getItem(`unsectioned-label-${playlistId}`)
+      if (saved) setUnsectionedLabelState(saved)
+    }
+  }, [playlistId])
+
+  // Wrapper to save to localStorage when label changes
+  const setUnsectionedLabel = (label: string) => {
+    setUnsectionedLabelState(label)
+    if (playlistId) {
+      localStorage.setItem(`unsectioned-label-${playlistId}`, label)
+    }
+  }
+
+  // Convert unsectioned tracks into a real section
+  const handleConvertToSection = async (title: string) => {
+    if (!playlistId) return
+
+    // Get unsectioned tracks
+    const unsectionedTracks = playlistTracks.filter(pt => !pt.section_id)
+    if (unsectionedTracks.length === 0) return
+
+    try {
+      // Create a new section at position 0 (top)
+      const newSection = await createSection(playlistId, title, null, 0)
+
+      // Update positions of existing sections
+      const updatedSections = sections.map(s => ({ ...s, position: s.position + 1 }))
+      for (const s of updatedSections) {
+        await updateSection(s.id, { position: s.position })
+      }
+
+      // Move all unsectioned tracks to the new section
+      const updates = unsectionedTracks.map((pt, i) => ({
+        id: pt.id,
+        position: i,
+        section_id: newSection.id
+      }))
+      await reorderPlaylistTracks(updates)
+
+      // Clear the localStorage label since it's now a real section
+      localStorage.removeItem(`unsectioned-label-${playlistId}`)
+      setUnsectionedLabelState('Unsectioned')
+
+      // Reload data to get the updated state
+      loadData()
+    } catch (err) {
+      console.error('Failed to convert to section:', err)
+      alert('Failed to convert to section. Check console for details.')
+    }
+  }
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -263,22 +392,52 @@ function PlaylistDetailPanel({
   const handleAddSection = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!playlistId || !newSectionTitle.trim()) return
-    await createSection(playlistId, newSectionTitle.trim(), newSectionEmoji.trim() || null, sections.length)
+    const newSection = await createSection(playlistId, newSectionTitle.trim(), newSectionEmoji.trim() || null, sections.length)
+    // Update local state immediately
+    setSections(prev => [...prev, newSection])
+    setExpandedSections(prev => new Set([...prev, newSection.id]))
     setNewSectionTitle('')
     setNewSectionEmoji('')
     setShowAddSection(false)
-    loadData()
   }
 
   const handleRenameSection = async (sectionId: string, title: string, emoji: string | null) => {
-    await updateSection(sectionId, { title, emoji })
-    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, title, emoji } : s))
+    try {
+      await updateSection(sectionId, { title, emoji })
+      // Update local state immediately so UI reflects the change
+      setSections(prev => prev.map(s => s.id === sectionId ? { ...s, title, emoji } : s))
+    } catch (err) {
+      console.error('Failed to update section:', err)
+      alert('Failed to save section name. Check console for details.')
+      // Reload to get correct state after error
+      loadData()
+    }
   }
 
   const handleDeleteSection = async (sectionId: string) => {
     if (!confirm('Delete this section? Tracks in it will be removed from the playlist.')) return
     await deleteSection(sectionId)
     loadData()
+  }
+
+  const handleMoveSection = async (sectionId: string, direction: 'up' | 'down') => {
+    const currentIndex = sections.findIndex(s => s.id === sectionId)
+    if (currentIndex === -1) return
+
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+    if (newIndex < 0 || newIndex >= sections.length) return
+
+    const reordered = arrayMove(sections, currentIndex, newIndex)
+    setSections(reordered)
+
+    try {
+      await Promise.all(
+        reordered.map((section, i) => updateSection(section.id, { position: i }))
+      )
+    } catch (err) {
+      console.error('Failed to save section order:', err)
+      loadData()
+    }
   }
 
   const handleAddTrackFromLibrary = async (trackId: string) => {
@@ -305,7 +464,26 @@ function PlaylistDetailPanel({
     if (!playlistId || !titleDraft.trim()) return
     await updatePlaylist(playlistId, { title: titleDraft.trim() })
     setPlaylist(prev => prev ? { ...prev, title: titleDraft.trim() } : prev)
+    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, title: titleDraft.trim() } : p))
     setEditingTitle(false)
+  }
+
+  const handleSaveClient = async () => {
+    if (!playlistId) return
+    const value = clientDraft.trim() || null
+    await updatePlaylist(playlistId, { client_name: value })
+    setPlaylist(prev => prev ? { ...prev, client_name: value } : prev)
+    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, client_name: value } : p))
+    setEditingClient(false)
+  }
+
+  const handleSaveDescription = async () => {
+    if (!playlistId) return
+    const value = descriptionDraft.trim() || null
+    await updatePlaylist(playlistId, { description: value })
+    setPlaylist(prev => prev ? { ...prev, description: value } : prev)
+    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, description: value } : p))
+    setEditingDescription(false)
   }
 
   const handleArtworkUpload = async () => {
@@ -370,16 +548,99 @@ function PlaylistDetailPanel({
     input.click()
   }
 
-  const handleTrackDragStart = (event: DragStartEvent) => {
-    setActiveTrackId(event.active.id as string)
+  // Upload files to library (not added to playlist yet)
+  const handleLibraryUpload = async (files: FileList | File[]) => {
+    if (!user) return
+    const fileArray = Array.from(files).filter(f => f.type.startsWith('audio/'))
+    if (fileArray.length === 0) return
+
+    setLibraryUploading(true)
+    for (const file of fileArray) {
+      try {
+        await uploadTrack(file, user.id)
+      } catch (err) {
+        console.error('Library upload failed:', err)
+      }
+    }
+    setLibraryUploading(false)
+    loadData()
   }
 
-  const handleTrackDragEnd = async (event: DragEndEvent) => {
+  const handleLibraryDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setLibraryDragOver(false)
+    if (e.dataTransfer.files?.length) {
+      handleLibraryUpload(e.dataTransfer.files)
+    }
+  }
+
+  const handleLibraryDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (e.dataTransfer.types.includes('Files')) {
+      setLibraryDragOver(true)
+    }
+  }
+
+  const handleLibraryDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setLibraryDragOver(false)
+  }
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const id = event.active.id as string
+    if (id.startsWith('section-')) {
+      setActiveSectionId(id.replace('section-', ''))
+    } else {
+      setActiveTrackId(id)
+    }
+  }
+
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event
     setActiveTrackId(null)
+    setActiveSectionId(null)
 
     if (!over) return
 
+    const activeId = active.id as string
+
+    // Handle section reordering
+    // Sortable sections have IDs like "section-{uuid}", droppable zones have "section-drop-{uuid}"
+    if (activeId.startsWith('section-') && !activeId.startsWith('section-drop-')) {
+      const overId = over.id as string
+      const activeSectionId = activeId.replace('section-', '')
+
+      // Extract target section ID - could be from sortable section or drop zone
+      let overSectionId: string | null = null
+      if (overId.startsWith('section-drop-')) {
+        overSectionId = overId.replace('section-drop-', '')
+      } else if (overId.startsWith('section-') && !overId.startsWith('section-drop-')) {
+        overSectionId = overId.replace('section-', '')
+      }
+
+      if (!overSectionId || activeSectionId === overSectionId) return
+
+      const oldIndex = sections.findIndex(s => s.id === activeSectionId)
+      const newIndex = sections.findIndex(s => s.id === overSectionId)
+      if (oldIndex === -1 || newIndex === -1) return
+
+      const reordered = arrayMove(sections, oldIndex, newIndex)
+      setSections(reordered)
+
+      // Persist new positions
+      try {
+        await Promise.all(
+          reordered.map((section, i) => updateSection(section.id, { position: i }))
+        )
+      } catch (err) {
+        console.error('Failed to save section order:', err)
+        // Revert on error
+        loadData()
+      }
+      return
+    }
+
+    // Handle track dragging (existing logic)
     const activeTrack = playlistTracks.find(pt => pt.id === active.id)
     if (!activeTrack) return
 
@@ -516,18 +777,31 @@ function PlaylistDetailPanel({
     )
   }
 
-  // Library drop zone
+  // Library drop zone - accepts track drags (to remove from playlist) AND file drops (to upload)
   function LibraryDropZone({ children }: { children: React.ReactNode }) {
     const { setNodeRef, isOver } = useDroppable({ id: 'library-drop-zone' })
+
     return (
-      <div ref={setNodeRef} className={`flex-1 overflow-auto p-2 transition-colors ${isOver ? 'bg-red-900/20 ring-2 ring-red-500 ring-inset' : ''}`}>
+      <div
+        ref={setNodeRef}
+        onDrop={handleLibraryDrop}
+        onDragOver={handleLibraryDragOver}
+        onDragLeave={handleLibraryDragLeave}
+        className={`flex-1 overflow-auto p-2 transition-colors ${
+          isOver ? 'bg-red-900/20 ring-2 ring-red-500 ring-inset' :
+          libraryDragOver ? 'bg-indigo-900/20 ring-2 ring-indigo-500 ring-inset' : ''
+        }`}
+      >
         {isOver && <p className="text-xs text-red-400 text-center py-2 mb-2">Drop to remove from playlist</p>}
+        {libraryDragOver && !isOver && <p className="text-xs text-indigo-400 text-center py-2 mb-2">Drop audio files to upload</p>}
+        {libraryUploading && <p className="text-xs text-indigo-400 text-center py-2 mb-2">Uploading...</p>}
         {children}
       </div>
     )
   }
 
   const activeTrack = activeTrackId ? playlistTracks.find(pt => pt.id === activeTrackId) : null
+  const activeSection = activeSectionId ? sections.find(s => s.id === activeSectionId) : null
 
   if (loading) {
     return (
@@ -585,8 +859,26 @@ function PlaylistDetailPanel({
                 {playlist.title}
               </h2>
             )}
-            {playlist.client_name && (
-              <p className="text-xs text-zinc-500 truncate">For {playlist.client_name}</p>
+            {editingClient ? (
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  value={clientDraft}
+                  onChange={e => setClientDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveClient()}
+                  placeholder="Client name"
+                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 w-32"
+                  autoFocus
+                />
+                <button onClick={handleSaveClient} className="text-xs text-indigo-400 hover:text-indigo-300">Save</button>
+                <button onClick={() => setEditingClient(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+              </div>
+            ) : (
+              <p
+                className="text-xs text-zinc-500 truncate cursor-pointer hover:text-zinc-400 transition-colors"
+                onClick={() => { setClientDraft(playlist.client_name || ''); setEditingClient(true) }}
+              >
+                {playlist.client_name ? `For ${playlist.client_name}` : 'Click to add client'}
+              </p>
             )}
           </div>
         </div>
@@ -621,37 +913,67 @@ function PlaylistDetailPanel({
         </div>
       </div>
 
+      {/* Description */}
+      <div className="px-4 py-2 border-b border-zinc-800">
+        {editingDescription ? (
+          <div className="space-y-2">
+            <textarea
+              value={descriptionDraft}
+              onChange={e => setDescriptionDraft(e.target.value)}
+              placeholder="Add a description..."
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              rows={2}
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button onClick={handleSaveDescription} className="text-xs text-indigo-400 hover:text-indigo-300">Save</button>
+              <button onClick={() => setEditingDescription(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <p
+            className="text-xs text-zinc-500 cursor-pointer hover:text-zinc-400 transition-colors"
+            onClick={() => { setDescriptionDraft(playlist.description || ''); setEditingDescription(true) }}
+          >
+            {playlist.description || 'Click to add description...'}
+          </p>
+        )}
+      </div>
+
       {/* Panel Content */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
-        onDragStart={handleTrackDragStart}
-        onDragEnd={handleTrackDragEnd}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
       >
         <div className="flex flex-1 overflow-hidden">
           <div className="flex-1 overflow-auto p-4">
             <div className="space-y-4">
-            {sections.map(section => (
-              <DroppableSectionZone key={section.id} sectionId={section.id}>
-                <div className="border border-zinc-800 rounded-lg overflow-hidden">
-                  <SortableSectionHeader
+            <SortableContext items={sections.map(s => `section-${s.id}`)} strategy={verticalListSortingStrategy}>
+              {sections.map((section, index) => (
+                <DroppableSectionZone key={section.id} sectionId={section.id}>
+                  <SortableSection
                     section={section}
                     trackCount={playlistTracks.filter(pt => pt.section_id === section.id).length}
                     expanded={expandedSections.has(section.id)}
                     onToggle={() => toggleSection(section.id)}
                     onDelete={() => handleDeleteSection(section.id)}
                     onRename={(title, emoji) => handleRenameSection(section.id, title, emoji)}
-                    listeners={{}}
-                    attributes={{}}
-                  />
-                  {expandedSections.has(section.id) && (
-                    <div className="px-4 py-2">
-                      {renderTrackList(section.id)}
-                    </div>
-                  )}
-                </div>
-              </DroppableSectionZone>
-            ))}
+                    onMoveUp={() => handleMoveSection(section.id, 'up')}
+                    onMoveDown={() => handleMoveSection(section.id, 'down')}
+                    isFirst={index === 0}
+                    isLast={index === sections.length - 1}
+                  >
+                    {expandedSections.has(section.id) && (
+                      <div className="px-4 py-2">
+                        {renderTrackList(section.id)}
+                      </div>
+                    )}
+                  </SortableSection>
+                </DroppableSectionZone>
+              ))}
+            </SortableContext>
 
             {playlistTracks.some(pt => !pt.section_id) && (
               <DroppableSectionZone sectionId={null}>
@@ -664,22 +986,29 @@ function PlaylistDetailPanel({
                           onChange={e => setUnsectionedDraft(e.target.value)}
                           onKeyDown={e => {
                             if (e.key === 'Enter') {
-                              setUnsectionedLabel(unsectionedDraft.trim() || 'Unsectioned')
+                              const trimmed = unsectionedDraft.trim() || 'Unsectioned'
+                              if (trimmed !== 'Unsectioned') {
+                                handleConvertToSection(trimmed)
+                              }
                               setEditingUnsectioned(false)
                             }
                             if (e.key === 'Escape') setEditingUnsectioned(false)
                           }}
+                          placeholder="Enter section name..."
                           className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           autoFocus
                         />
                         <button
                           onClick={() => {
-                            setUnsectionedLabel(unsectionedDraft.trim() || 'Unsectioned')
+                            const trimmed = unsectionedDraft.trim() || 'Unsectioned'
+                            if (trimmed !== 'Unsectioned') {
+                              handleConvertToSection(trimmed)
+                            }
                             setEditingUnsectioned(false)
                           }}
                           className="text-xs text-indigo-400 hover:text-indigo-300 font-medium"
                         >
-                          Save
+                          {unsectionedDraft.trim() && unsectionedDraft.trim() !== 'Unsectioned' ? 'Convert to Section' : 'Save'}
                         </button>
                         <button
                           onClick={() => setEditingUnsectioned(false)}
@@ -693,11 +1022,11 @@ function PlaylistDetailPanel({
                         <span className="text-sm text-zinc-400 flex-1">{unsectionedLabel}</span>
                         <button
                           onClick={() => {
-                            setUnsectionedDraft(unsectionedLabel)
+                            setUnsectionedDraft('')
                             setEditingUnsectioned(true)
                           }}
                           className="text-zinc-400 hover:text-indigo-400 p-1 rounded hover:bg-zinc-700/50 transition-colors"
-                          title="Edit label"
+                          title="Convert to section"
                         >
                           <Pencil size={14} />
                         </button>
@@ -751,19 +1080,39 @@ function PlaylistDetailPanel({
             <div className="w-64 bg-zinc-900 border-l border-zinc-800 flex flex-col shrink-0">
           <div className="flex items-center justify-between p-3 border-b border-zinc-800">
             <h3 className="font-semibold text-sm">Library</h3>
-            <button onClick={() => setShowLibrary(false)} className="text-zinc-400 hover:text-white">
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const input = document.createElement('input')
+                  input.type = 'file'
+                  input.multiple = true
+                  input.accept = 'audio/*'
+                  input.onchange = () => {
+                    if (input.files?.length) handleLibraryUpload(input.files)
+                  }
+                  input.click()
+                }}
+                disabled={libraryUploading}
+                className="text-zinc-400 hover:text-indigo-400 disabled:opacity-50"
+                title="Upload tracks"
+              >
+                <Upload size={16} />
+              </button>
+              <button onClick={() => setShowLibrary(false)} className="text-zinc-400 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           {sections.length > 0 && (
             <div className="px-3 py-2 border-b border-zinc-800">
               <select
+                key={sections.map(s => `${s.id}-${s.title}`).join(',')}
                 value={libraryTarget ?? ''}
                 onChange={e => setLibraryTarget(e.target.value || null)}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value="">Unsectioned</option>
+                <option value="">{unsectionedLabel}</option>
                 {sections.map(sec => (
                   <option key={sec.id} value={sec.id}>
                     {sec.emoji ? `${sec.emoji} ` : ''}{sec.title}
@@ -794,6 +1143,9 @@ function PlaylistDetailPanel({
                 </div>
               ))
             )}
+            <p className="text-xs text-zinc-500 text-center mt-4 px-2 py-3 border border-dashed border-zinc-700 rounded-lg mx-1">
+              Drag & drop audio files here to upload
+            </p>
             </LibraryDropZone>
           </div>
           )}
@@ -808,6 +1160,15 @@ function PlaylistDetailPanel({
               <Music size={14} className="text-zinc-500" />
             </div>
             <span className="text-sm">{activeTrack.track?.title}</span>
+          </div>
+        )}
+        {activeSection && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-zinc-800 border border-indigo-500 shadow-xl">
+            <GripVertical size={16} className="text-zinc-500" />
+            <span className="text-base">
+              {activeSection.emoji && <span className="mr-2">{activeSection.emoji}</span>}
+              <span className="font-medium">{activeSection.title}</span>
+            </span>
           </div>
         )}
       </DragOverlay>
@@ -948,6 +1309,19 @@ export default function PlaylistsPage() {
                     ) : (
                       <Copy size={12} />
                     )}
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      if (!confirm(`Delete "${pl.title}"?`)) return
+                      await deletePlaylist(pl.id)
+                      setPlaylists(prev => prev.filter(p => p.id !== pl.id))
+                      if (selectedPlaylist === pl.id) setSelectedPlaylist(null)
+                    }}
+                    className="p-1.5 rounded-md hover:bg-zinc-700 text-zinc-500 hover:text-red-400"
+                    title="Delete"
+                  >
+                    <Trash2 size={12} />
                   </button>
                 </div>
               </div>
