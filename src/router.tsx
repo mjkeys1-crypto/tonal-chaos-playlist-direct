@@ -2,7 +2,6 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import AdminLayout from './components/layout/AdminLayout'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
 import TracksPage from './pages/TracksPage'
 import PlaylistsPage from './pages/PlaylistsPage'
 import PlaylistDetail from './pages/PlaylistDetail'
@@ -37,8 +36,7 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute><AdminLayout /></ProtectedRoute>,
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'tracks', element: <TracksPage /> },
+      { index: true, element: <TracksPage /> },
       { path: 'playlists', element: <PlaylistsPage /> },
       { path: 'playlists/:id', element: <PlaylistDetail /> },
       { path: 'analytics', element: <AnalyticsPage /> },

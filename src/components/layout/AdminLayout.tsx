@@ -2,11 +2,10 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { PlayerProvider } from '../../context/PlayerContext'
 import PlayerBar from '../player/PlayerBar'
-import { LayoutDashboard, Music, ListMusic, BarChart3, LogOut } from 'lucide-react'
+import { Music, ListMusic, BarChart3, LogOut } from 'lucide-react'
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/tracks', icon: Music, label: 'Tracks' },
+  { to: '/', icon: Music, label: 'Tracks' },
   { to: '/playlists', icon: ListMusic, label: 'Playlists' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
 ]

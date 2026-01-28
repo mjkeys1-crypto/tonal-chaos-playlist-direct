@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, Play, Trash2, Music, Loader2, ListPlus, Check } from 'lucide-react'
+import { Plus, Play, Trash2, Music, Loader2, ListPlus, Check, ListMusic, Share2, Download } from 'lucide-react'
 import { listTracks, deleteTrack, getSignedUrl } from '../lib/api/tracks'
 import { listPlaylists, listSections, addTracksToPlaylist } from '../lib/api/playlists'
+import { getOverviewStats } from '../lib/api/analytics'
 import { usePlayer } from '../context/PlayerContext'
 import TrackUploader from '../components/tracks/TrackUploader'
 import type { Track, Playlist, Section } from '../lib/types'
@@ -24,6 +25,7 @@ export default function TracksPage() {
   const [showUploader, setShowUploader] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
   const { play, currentTrack, isPlaying, pause, resume } = usePlayer()
+  const [stats, setStats] = useState({ tracks: 0, playlists: 0, activeShares: 0, totalPlays: 0, totalDownloads: 0 })
 
   // Multi-select state
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -45,7 +47,7 @@ export default function TracksPage() {
     }
   }
 
-  useEffect(() => { loadTracks() }, [])
+  useEffect(() => { loadTracks(); getOverviewStats().then(setStats) }, [])
 
   const handlePlay = async (track: Track) => {
     if (currentTrack?.id === track.id) {
@@ -116,6 +118,23 @@ export default function TracksPage() {
 
   return (
     <div className="p-8">
+      {/* Stats Overview */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        {[
+          { label: 'Tracks', value: stats.tracks, icon: Music, color: 'text-blue-400' },
+          { label: 'Playlists', value: stats.playlists, icon: ListMusic, color: 'text-purple-400' },
+          { label: 'Active Shares', value: stats.activeShares, icon: Share2, color: 'text-green-400' },
+          { label: 'Total Plays', value: stats.totalPlays, icon: Play, color: 'text-amber-400' },
+          { label: 'Downloads', value: stats.totalDownloads, icon: Download, color: 'text-indigo-400' },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
+            <Icon size={20} className={`${color} mb-3`} />
+            <p className="text-2xl font-bold">{value}</p>
+            <p className="text-sm text-zinc-500 mt-1">{label}</p>
+          </div>
+        ))}
+      </div>
+
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Track Library</h1>
         <div className="flex gap-2">

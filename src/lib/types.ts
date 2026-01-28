@@ -55,6 +55,7 @@ export interface Share {
   id: string
   playlist_id: string
   slug: string
+  label: string | null
   access_mode: 'link' | 'email_verified'
   password_hash: string | null
   allow_download: boolean

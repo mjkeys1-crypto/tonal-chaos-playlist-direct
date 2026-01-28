@@ -20,7 +20,7 @@ export async function getOverviewStats() {
 export async function getRecentPlays(limit = 50) {
   const { data, error } = await supabase
     .from('play_events')
-    .select('*, track:tracks(title)')
+    .select('*, track:tracks(title), share_link:share_links(slug, label)')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw error
@@ -45,6 +45,27 @@ export async function getPlaysByTrack() {
   return Object.entries(counts)
     .map(([id, { title, count }]) => ({ id, title, count }))
     .sort((a, b) => b.count - a.count)
+}
+
+export async function getPageViews(limit = 50) {
+  const { data, error } = await supabase
+    .from('analytics_events')
+    .select('*, share_link:share_links(slug, label)')
+    .eq('event_type', 'page_view')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data
+}
+
+export async function getRecentDownloads(limit = 50) {
+  const { data, error } = await supabase
+    .from('download_events')
+    .select('*, track:tracks(title), share_link:share_links(slug, label)')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data
 }
 
 export async function getShareAnalytics(shareId: string) {

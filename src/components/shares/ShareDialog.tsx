@@ -11,6 +11,7 @@ interface Props {
 export default function ShareDialog({ playlistId, onClose }: Props) {
   const [shares, setShares] = useState<Share[]>([])
   const [, setLoading] = useState(true)
+  const [label, setLabel] = useState('')
   const [allowDownload, setAllowDownload] = useState(false)
   const [password, setPassword] = useState('')
   const [expiryDays, setExpiryDays] = useState('')
@@ -32,10 +33,12 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
         ? new Date(Date.now() + parseInt(expiryDays) * 86400000).toISOString()
         : null
       await createShare(playlistId, {
+        label: label.trim(),
         allowDownload,
         passwordHash: password || null,
         expiresAt,
       })
+      setLabel('')
       setPassword('')
       setExpiryDays('')
       setAllowDownload(false)
@@ -75,6 +78,17 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
           {/* Create new */}
           <div className="border border-zinc-700 rounded-lg p-4 space-y-3">
             <h3 className="text-sm font-medium text-zinc-300">Create New Link</h3>
+            <div>
+              <label className="text-xs text-zinc-500 mb-1 block">Recipient / Label *</label>
+              <input
+                type="text"
+                value={label}
+                onChange={e => setLabel(e.target.value)}
+                placeholder="e.g. Netflix, John Smith"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                required
+              />
+            </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-400">Allow downloads</span>
               <button onClick={() => setAllowDownload(!allowDownload)}>
@@ -106,7 +120,7 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
             </div>
             <button
               onClick={handleCreate}
-              disabled={creating}
+              disabled={creating || !label.trim()}
               className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium py-2 rounded-lg transition-colors"
             >
               {creating ? 'Creating...' : 'Create Share Link'}
@@ -121,8 +135,9 @@ export default function ShareDialog({ playlistId, onClose }: Props) {
                 <div key={share.id} className="flex items-center gap-3 bg-zinc-800 rounded-lg px-3 py-2.5">
                   <Link size={14} className={share.is_active ? 'text-green-400' : 'text-zinc-600'} />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-mono truncate">/s/{share.slug}</p>
+                    <p className="text-sm font-medium truncate">{share.label || share.slug}</p>
                     <div className="flex gap-3 text-xs text-zinc-500 mt-0.5">
+                      <span className="font-mono">/s/{share.slug}</span>
                       {share.password_hash && <span>Password</span>}
                       {share.allow_download && <span>Downloads</span>}
                       {share.expires_at && (

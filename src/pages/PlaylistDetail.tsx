@@ -1,12 +1,22 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Share2, Library, X } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Share2, Library, X, Upload, Pencil } from 'lucide-react'
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
   getPlaylist, listSections, listPlaylistTracks, createSection, deleteSection,
   addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist, updatePlaylist,
+  reorderPlaylistTracks, updateSection,
 } from '../lib/api/playlists'
-import { listTracks, getSignedUrl } from '../lib/api/tracks'
+import { listTracks, getSignedUrl, uploadTrack } from '../lib/api/tracks'
 import { usePlayer } from '../context/PlayerContext'
+import { useAuth } from '../context/AuthContext'
 import ShareDialog from '../components/shares/ShareDialog'
 import type { Playlist, Section, PlaylistTrack, Track } from '../lib/types'
 
@@ -15,10 +25,159 @@ function formatDuration(s: number | null) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 }
 
+// ─── Sortable Track Row ───
+function SortableTrackRow({
+  pt, currentTrack, isPlaying, onPlay, onRemove,
+}: {
+  pt: PlaylistTrack
+  currentTrack: Track | null
+  isPlaying: boolean
+  onPlay: (t: Track) => void
+  onRemove: (id: string) => void
+}) {
+  const track = pt.track
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pt.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
+
+  if (!track) return null
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg group hover:bg-zinc-800/50 ${
+        currentTrack?.id === track.id ? 'bg-zinc-800/50' : ''
+      }`}
+    >
+      <button {...attributes} {...listeners} className="touch-none text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing">
+        <GripVertical size={14} />
+      </button>
+      <button onClick={() => onPlay(track)} className="text-zinc-400 hover:text-white">
+        <Play size={14} fill={currentTrack?.id === track.id && isPlaying ? 'currentColor' : 'none'} />
+      </button>
+      <span className="flex-1 text-sm truncate">{track.title}</span>
+      <span className="text-xs text-zinc-500 tabular-nums">{formatDuration(track.duration)}</span>
+      <button
+        onClick={() => onRemove(pt.id)}
+        className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  )
+}
+
+// ─── Sortable Section ───
+function SortableSectionHeader({
+  section, trackCount, expanded, onToggle, onDelete, onRename, listeners, attributes,
+}: {
+  section: Section
+  trackCount: number
+  expanded: boolean
+  onToggle: () => void
+  onDelete: () => void
+  onRename: (title: string, emoji: string | null) => void
+  listeners: any
+  attributes: any
+}) {
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(section.title)
+  const [editEmoji, setEditEmoji] = useState(section.emoji || '')
+
+  const handleSave = () => {
+    if (editTitle.trim()) {
+      onRename(editTitle.trim(), editEmoji.trim() || null)
+    }
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900">
+        <input
+          value={editEmoji}
+          onChange={e => setEditEmoji(e.target.value)}
+          placeholder="🎵"
+          className="w-12 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-center text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <input
+          value={editTitle}
+          onChange={e => setEditTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false) }}
+          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          autoFocus
+        />
+        <button onClick={handleSave} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Save</button>
+        <button onClick={() => setEditing(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors group">
+      <button {...attributes} {...listeners} className="touch-none text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing">
+        <GripVertical size={16} />
+      </button>
+      <button onClick={onToggle} className="flex items-center gap-3 flex-1 text-left">
+        {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <span className="text-base">
+          {section.emoji && <span className="mr-2">{section.emoji}</span>}
+          <span className="font-medium">{section.title}</span>
+        </span>
+        <span className="text-xs text-zinc-500 ml-auto">{trackCount} tracks</span>
+      </button>
+      <button
+        onClick={() => { setEditTitle(section.title); setEditEmoji(section.emoji || ''); setEditing(true) }}
+        className="text-zinc-600 hover:text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <Pencil size={13} />
+      </button>
+      <button
+        onClick={onDelete}
+        className="text-zinc-600 hover:text-red-400 ml-1 transition-colors"
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  )
+}
+
+function SortableSection({
+  section, trackCount, expanded, onToggle, onDelete, onRename, children,
+}: {
+  section: Section
+  trackCount: number
+  expanded: boolean
+  onToggle: () => void
+  onDelete: () => void
+  onRename: (title: string, emoji: string | null) => void
+  children: React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
+
+  return (
+    <div ref={setNodeRef} style={style} className="border border-zinc-800 rounded-lg overflow-hidden">
+      <SortableSectionHeader
+        section={section}
+        trackCount={trackCount}
+        expanded={expanded}
+        onToggle={onToggle}
+        onDelete={onDelete}
+        onRename={onRename}
+        listeners={listeners}
+        attributes={attributes}
+      />
+      {expanded && children}
+    </div>
+  )
+}
+
+// ─── Main Component ───
 export default function PlaylistDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { play, currentTrack, isPlaying, pause, resume } = usePlayer()
+  const { user } = useAuth()
 
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
   const [sections, setSections] = useState<Section[]>([])
@@ -33,7 +192,10 @@ export default function PlaylistDetail() {
   const [titleDraft, setTitleDraft] = useState('')
   const [showShare, setShowShare] = useState(false)
   const [showLibrary, setShowLibrary] = useState(false)
-  const [libraryTarget, setLibraryTarget] = useState<string | null>(null) // section ID to add to, null = unsectioned
+  const [libraryTarget, setLibraryTarget] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   const loadData = useCallback(async () => {
     if (!id) return
@@ -47,7 +209,7 @@ export default function PlaylistDetail() {
     setSections(secs)
     setPlaylistTracks(pts)
     setAllTracks(tracks)
-    setExpandedSections(new Set(secs.map(s => s.id)))
+    setExpandedSections(prev => prev.size > 0 ? prev : new Set(secs.map(s => s.id)))
     setLoading(false)
   }, [id])
 
@@ -80,6 +242,11 @@ export default function PlaylistDetail() {
     setNewSectionEmoji('')
     setShowAddSection(false)
     loadData()
+  }
+
+  const handleRenameSection = async (sectionId: string, title: string, emoji: string | null) => {
+    await updateSection(sectionId, { title, emoji })
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, title, emoji } : s))
   }
 
   const handleDeleteSection = async (sectionId: string) => {
@@ -120,7 +287,79 @@ export default function PlaylistDetail() {
     setShowLibrary(true)
   }
 
-  // Tracks not already in the playlist
+  // Upload files directly into the playlist
+  const handleUploadToPlaylist = async (sectionId: string | null) => {
+    if (!user || !id) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.accept = 'audio/*'
+    input.onchange = async () => {
+      if (!input.files?.length) return
+      setUploading(true)
+      const files = Array.from(input.files)
+      const sectionTracks = playlistTracks.filter(pt =>
+        sectionId ? pt.section_id === sectionId : !pt.section_id
+      )
+      let pos = sectionTracks.length
+      for (const file of files) {
+        try {
+          const track = await uploadTrack(file, user.id)
+          await addTrackToPlaylist(id, track.id, sectionId, pos)
+          pos++
+        } catch (err) {
+          console.error('Upload failed:', err)
+        }
+      }
+      setUploading(false)
+      loadData()
+    }
+    input.click()
+  }
+
+  // ─── Drag-to-reorder tracks ───
+  const handleTrackDragEnd = (sectionId: string | null) => async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const filtered = playlistTracks
+      .filter(pt => sectionId ? pt.section_id === sectionId : !pt.section_id)
+      .sort((a, b) => a.position - b.position)
+
+    const oldIndex = filtered.findIndex(pt => pt.id === active.id)
+    const newIndex = filtered.findIndex(pt => pt.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    const reordered = arrayMove(filtered, oldIndex, newIndex)
+    // Optimistic update
+    const updated = playlistTracks.map(pt => {
+      const idx = reordered.findIndex(r => r.id === pt.id)
+      return idx >= 0 ? { ...pt, position: idx } : pt
+    })
+    setPlaylistTracks(updated)
+
+    // Persist
+    await reorderPlaylistTracks(reordered.map((pt, i) => ({ id: pt.id, position: i, section_id: pt.section_id })))
+  }
+
+  // ─── Drag-to-reorder sections ───
+  const handleSectionDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const oldIndex = sections.findIndex(s => s.id === active.id)
+    const newIndex = sections.findIndex(s => s.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    const reordered = arrayMove(sections, oldIndex, newIndex)
+    setSections(reordered)
+
+    // Persist positions
+    for (let i = 0; i < reordered.length; i++) {
+      await updateSection(reordered[i].id, { position: i })
+    }
+  }
+
   const availableTracks = allTracks.filter(t => !playlistTracks.some(pt => pt.track_id === t.id))
 
   if (loading) {
@@ -142,45 +381,43 @@ export default function PlaylistDetail() {
 
     return (
       <div className="space-y-1">
-        {tracks.map(pt => {
-          const track = pt.track
-          if (!track) return null
-          return (
-            <div
-              key={pt.id}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg group hover:bg-zinc-800/50 ${
-                currentTrack?.id === track.id ? 'bg-zinc-800/50' : ''
-              }`}
-            >
-              <GripVertical size={14} className="text-zinc-600 cursor-grab" />
-              <button onClick={() => handlePlay(track)} className="text-zinc-400 hover:text-white">
-                <Play size={14} fill={currentTrack?.id === track.id && isPlaying ? 'currentColor' : 'none'} />
-              </button>
-              <span className="flex-1 text-sm truncate">{track.title}</span>
-              <span className="text-xs text-zinc-500 tabular-nums">{formatDuration(track.duration)}</span>
-              <button
-                onClick={() => handleRemoveTrack(pt.id)}
-                className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          )
-        })}
-        <button
-          onClick={() => openLibrary(sectionId)}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-        >
-          <Plus size={14} />
-          Add track
-        </button>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTrackDragEnd(sectionId)}>
+          <SortableContext items={tracks.map(pt => pt.id)} strategy={verticalListSortingStrategy}>
+            {tracks.map(pt => (
+              <SortableTrackRow
+                key={pt.id}
+                pt={pt}
+                currentTrack={currentTrack}
+                isPlaying={isPlaying}
+                onPlay={handlePlay}
+                onRemove={handleRemoveTrack}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => openLibrary(sectionId)}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <Plus size={14} />
+            Add track
+          </button>
+          <button
+            onClick={() => handleUploadToPlaylist(sectionId)}
+            disabled={uploading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <Upload size={14} />
+            {uploading ? 'Uploading...' : 'Upload'}
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="flex">
-      {/* Main content */}
       <div className={`p-8 flex-1 max-w-3xl transition-all ${showLibrary ? 'mr-80' : ''}`}>
         {/* Header */}
         <button onClick={() => navigate('/playlists')} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white mb-4 transition-colors">
@@ -228,45 +465,33 @@ export default function PlaylistDetail() {
               <Share2 size={14} />
               Share
             </button>
-            <button
-              onClick={handleDeletePlaylist}
-              className="text-zinc-500 hover:text-red-400 px-3 py-2 transition-colors"
-            >
+            <button onClick={handleDeletePlaylist} className="text-zinc-500 hover:text-red-400 px-3 py-2 transition-colors">
               <Trash2 size={16} />
             </button>
           </div>
         </div>
 
-        {/* Sections */}
+        {/* Sections (sortable) */}
         <div className="space-y-4">
-          {sections.map(section => (
-            <div key={section.id} className="border border-zinc-800 rounded-lg overflow-hidden">
-              <button
-                onClick={() => toggleSection(section.id)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors text-left"
-              >
-                {expandedSections.has(section.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                <span className="text-base">
-                  {section.emoji && <span className="mr-2">{section.emoji}</span>}
-                  <span className="font-medium">{section.title}</span>
-                </span>
-                <span className="text-xs text-zinc-500 ml-auto">
-                  {playlistTracks.filter(pt => pt.section_id === section.id).length} tracks
-                </span>
-                <button
-                  onClick={e => { e.stopPropagation(); handleDeleteSection(section.id) }}
-                  className="text-zinc-600 hover:text-red-400 ml-2 transition-colors"
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
+            <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
+              {sections.map(section => (
+                <SortableSection
+                  key={section.id}
+                  section={section}
+                  trackCount={playlistTracks.filter(pt => pt.section_id === section.id).length}
+                  expanded={expandedSections.has(section.id)}
+                  onToggle={() => toggleSection(section.id)}
+                  onDelete={() => handleDeleteSection(section.id)}
+                  onRename={(title, emoji) => handleRenameSection(section.id, title, emoji)}
                 >
-                  <Trash2 size={14} />
-                </button>
-              </button>
-              {expandedSections.has(section.id) && (
-                <div className="px-4 py-2">
-                  {renderTrackList(section.id)}
-                </div>
-              )}
-            </div>
-          ))}
+                  <div className="px-4 py-2">
+                    {renderTrackList(section.id)}
+                  </div>
+                </SortableSection>
+              ))}
+            </SortableContext>
+          </DndContext>
 
           {/* Unsectioned tracks */}
           {playlistTracks.some(pt => !pt.section_id) && (
@@ -326,7 +551,6 @@ export default function PlaylistDetail() {
             </button>
           </div>
 
-          {/* Section target selector */}
           {sections.length > 0 && (
             <div className="px-4 py-3 border-b border-zinc-800">
               <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider">Add to</p>

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock } from 'lucide-react'
+import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown } from 'lucide-react'
+import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
 import type { Playlist, Section, PlaylistTrack, Track } from '../lib/types'
 
@@ -52,6 +53,8 @@ export default function SharedPlaylist() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const [zipping, setZipping] = useState(false)
+  const [zipProgress, setZipProgress] = useState('')
 
   useEffect(() => {
     loadShare()
@@ -151,16 +154,52 @@ export default function SharedPlaylist() {
     if (!path) return
     const { data } = await supabase.storage.from('tracks').createSignedUrl(path, 300)
     if (!data) return
+
+    const res = await fetch(data.signedUrl)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = data.signedUrl
+    a.href = url
     a.download = `${track.title}.${track.format || 'wav'}`
     a.click()
+    URL.revokeObjectURL(url)
 
     supabase.from('download_events').insert({
       track_id: track.id,
       share_id: share?.id,
       user_agent: navigator.userAgent,
     }).then(() => {})
+  }
+
+  const handleDownloadAll = async () => {
+    const tracks = playlistTracks.map(pt => pt.track).filter(Boolean) as Track[]
+    if (tracks.length === 0) return
+    setZipping(true)
+    try {
+      const zip = new JSZip()
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i]
+        setZipProgress(`Downloading ${i + 1} of ${tracks.length}...`)
+        const path = track.storage_path || track.file_url
+        if (!path) continue
+        const { data } = await supabase.storage.from('tracks').createSignedUrl(path, 300)
+        if (!data) continue
+        const res = await fetch(data.signedUrl)
+        const blob = await res.blob()
+        zip.file(`${track.title}.${track.format || 'wav'}`, blob)
+      }
+      setZipProgress('Building ZIP...')
+      const content = await zip.generateAsync({ type: 'blob' })
+      const url = URL.createObjectURL(content)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${share!.playlist.title}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setZipping(false)
+      setZipProgress('')
+    }
   }
 
   const toggleSection = (sectionId: string) => {
@@ -313,6 +352,22 @@ export default function SharedPlaylist() {
             <span className="text-xs text-zinc-500">{totalTracks} track{totalTracks !== 1 ? 's' : ''}</span>
             <span className="w-1 h-1 bg-zinc-700 rounded-full" />
             <span className="text-xs text-zinc-500">{totalMins} min</span>
+            {share!.allow_download && (
+              <>
+                <span className="w-1 h-1 bg-zinc-700 rounded-full" />
+                <button
+                  onClick={handleDownloadAll}
+                  disabled={zipping}
+                  className="flex items-center gap-2 text-xs text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                >
+                  {zipping ? (
+                    <><Loader2 size={12} className="animate-spin" /> {zipProgress}</>
+                  ) : (
+                    <><FolderDown size={13} /> Download All</>
+                  )}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>

@@ -12,6 +12,7 @@ export async function listSharesForPlaylist(playlistId: string): Promise<Share[]
 }
 
 export async function createShare(playlistId: string, opts: {
+  label: string
   allowDownload?: boolean
   passwordHash?: string | null
   expiresAt?: string | null
@@ -22,6 +23,7 @@ export async function createShare(playlistId: string, opts: {
     .insert({
       playlist_id: playlistId,
       slug,
+      label: opts.label,
       allow_download: opts.allowDownload ?? false,
       password_hash: opts.passwordHash ?? null,
       expires_at: opts.expiresAt ?? null,
