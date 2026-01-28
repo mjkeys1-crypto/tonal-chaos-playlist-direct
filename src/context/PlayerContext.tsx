@@ -1,15 +1,16 @@
-import { createContext, useContext, useState, useRef, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import type { Track } from '../lib/types'
 
 interface PlayerState {
   currentTrack: Track | null
   isPlaying: boolean
   audioUrl: string | null
-  audioRef: React.RefObject<HTMLAudioElement | null>
-  play: (track: Track, url: string) => void
+  artworkUrl: string | null
+  play: (track: Track, url: string, artworkUrl?: string) => void
   pause: () => void
   resume: () => void
   stop: () => void
+  setIsPlaying: (v: boolean) => void
 }
 
 const PlayerContext = createContext<PlayerState | undefined>(undefined)
@@ -18,37 +19,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [artworkUrl, setArtworkUrl] = useState<string | null>(null)
 
-  const play = useCallback((track: Track, url: string) => {
+  const play = useCallback((track: Track, url: string, artwork?: string) => {
     setCurrentTrack(track)
     setAudioUrl(url)
+    setArtworkUrl(artwork || null)
     setIsPlaying(true)
-    // Audio element will auto-play via useEffect in PlayerBar
   }, [])
 
   const pause = useCallback(() => {
-    audioRef.current?.pause()
     setIsPlaying(false)
   }, [])
 
   const resume = useCallback(() => {
-    audioRef.current?.play()
     setIsPlaying(true)
   }, [])
 
   const stop = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.currentTime = 0
-    }
     setCurrentTrack(null)
     setAudioUrl(null)
+    setArtworkUrl(null)
     setIsPlaying(false)
   }, [])
 
   return (
-    <PlayerContext.Provider value={{ currentTrack, isPlaying, audioUrl, audioRef, play, pause, resume, stop }}>
+    <PlayerContext.Provider value={{ currentTrack, isPlaying, audioUrl, artworkUrl, play, pause, resume, stop, setIsPlaying }}>
       {children}
     </PlayerContext.Provider>
   )

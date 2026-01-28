@@ -13,11 +13,17 @@ interface UploadItem {
 interface Props {
   onComplete: () => void
   onClose: () => void
+  initialFiles?: File[]
 }
 
-export default function TrackUploader({ onComplete, onClose }: Props) {
+export default function TrackUploader({ onComplete, onClose, initialFiles }: Props) {
   const { user } = useAuth()
-  const [items, setItems] = useState<UploadItem[]>([])
+  const [items, setItems] = useState<UploadItem[]>(() => {
+    if (initialFiles && initialFiles.length > 0) {
+      return initialFiles.map(file => ({ file, status: 'pending' as const, progress: 0 }))
+    }
+    return []
+  })
   const [dragging, setDragging] = useState(false)
 
   const addFiles = useCallback((files: FileList | File[]) => {

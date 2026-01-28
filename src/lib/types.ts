@@ -10,11 +10,21 @@ export interface Track {
   id: string
   title: string
   artist: string | null
+  album: string | null
+  year: number | null
+  genre: string | null
+  composer: string | null
+  bpm: number | null
+  key: string | null
+  isrc: string | null
+  copyright: string | null
+  comment: string | null
   duration: number | null
   format: string | null
   file_size: number | null
   file_url: string | null
   storage_path: string | null
+  artwork_path: string | null
   waveform_data: number[] | null
   owner_id: string
   created_at: string

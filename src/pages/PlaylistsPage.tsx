@@ -1,22 +1,851 @@
-import { useEffect, useState } from 'react'
-import { Plus, ListMusic, Loader2 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
-import { listPlaylists, createPlaylist } from '../lib/api/playlists'
+import { useEffect, useState, useCallback } from 'react'
+import { Plus, ListMusic, Loader2, Copy, Trash2, Music, GripVertical, ChevronDown, ChevronRight, Share2, Library, X, Upload, Pencil, Play, Pause } from 'lucide-react'
+import { listPlaylists, createPlaylist, duplicatePlaylist, deletePlaylist, getArtworkUrl, getPlaylist, listSections, listPlaylistTracks, createSection, deleteSection, addTrackToPlaylist, removeTrackFromPlaylist, updatePlaylist, reorderPlaylistTracks, updateSection, uploadPlaylistArtwork } from '../lib/api/playlists'
+import { listTracks, getSignedUrl, uploadTrack, getTrackArtworkUrl } from '../lib/api/tracks'
 import { useAuth } from '../context/AuthContext'
-import type { Playlist } from '../lib/types'
+import { usePlayer } from '../context/PlayerContext'
+import ShareDialog from '../components/shares/ShareDialog'
+import type { Playlist, Section, PlaylistTrack, Track } from '../lib/types'
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable,
+  type DragEndEvent, type DragStartEvent, DragOverlay,
+} from '@dnd-kit/core'
+import {
+  SortableContext, useSortable, verticalListSortingStrategy, arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
+function formatDuration(s: number | null) {
+  if (!s) return '--:--'
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+}
+
+// ─── Sortable Track Row ───
+function SortableTrackRow({
+  pt, currentTrack, isPlaying, onPlay, onRemove, artworkUrl,
+}: {
+  pt: PlaylistTrack
+  currentTrack: Track | null
+  isPlaying: boolean
+  onPlay: (t: Track) => void
+  onRemove: (id: string) => void
+  artworkUrl?: string
+}) {
+  const track = pt.track
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pt.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
+
+  if (!track) return null
+  const isCurrent = currentTrack?.id === track.id
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg group hover:bg-zinc-800/50 ${
+        isCurrent ? 'bg-zinc-800/50' : ''
+      }`}
+    >
+      <button {...attributes} {...listeners} className="touch-none text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded hover:bg-zinc-700/50 transition-colors" title="Drag to reorder">
+        <GripVertical size={16} />
+      </button>
+      <button
+        onClick={() => onPlay(track)}
+        className="relative w-9 h-9 rounded-md bg-zinc-800 flex items-center justify-center shrink-0 overflow-hidden group/play"
+      >
+        {artworkUrl ? (
+          <img src={artworkUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Music size={14} className="text-zinc-600" />
+        )}
+        <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+          isCurrent && isPlaying
+            ? 'opacity-100 bg-indigo-600/80'
+            : isCurrent
+            ? 'opacity-100 bg-black/60'
+            : 'opacity-0 group-hover/play:opacity-100 bg-black/60'
+        }`}>
+          {isCurrent && isPlaying ? (
+            <Pause size={14} className="text-white" fill="currentColor" />
+          ) : (
+            <Play size={14} className="text-white ml-0.5" fill="currentColor" />
+          )}
+        </div>
+      </button>
+      <span className="flex-1 text-sm truncate">{track.title}</span>
+      <span className="text-xs text-zinc-500 tabular-nums">{formatDuration(track.duration)}</span>
+      <button
+        onClick={() => onRemove(pt.id)}
+        className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-zinc-700/50 transition-colors shrink-0"
+        title="Remove from playlist"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  )
+}
+
+// ─── Sortable Section Header ───
+function SortableSectionHeader({
+  section, trackCount, expanded, onToggle, onDelete, onRename, listeners, attributes,
+}: {
+  section: Section
+  trackCount: number
+  expanded: boolean
+  onToggle: () => void
+  onDelete: () => void
+  onRename: (title: string, emoji: string | null) => void
+  listeners: any
+  attributes: any
+}) {
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(section.title)
+  const [editEmoji, setEditEmoji] = useState(section.emoji || '')
+
+  const handleSave = () => {
+    if (editTitle.trim()) {
+      onRename(editTitle.trim(), editEmoji.trim() || null)
+    }
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-3 bg-zinc-900">
+        <input
+          value={editEmoji}
+          onChange={e => setEditEmoji(e.target.value)}
+          placeholder="🎵"
+          className="w-12 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-center text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <input
+          value={editTitle}
+          onChange={e => setEditTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false) }}
+          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          autoFocus
+        />
+        <button onClick={handleSave} className="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Save</button>
+        <button onClick={() => setEditing(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors group">
+      <button {...attributes} {...listeners} className="touch-none text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded hover:bg-zinc-700/50">
+        <GripVertical size={16} />
+      </button>
+      <button onClick={onToggle} className="flex items-center gap-3 flex-1 text-left">
+        {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <span className="text-base">
+          {section.emoji && <span className="mr-2">{section.emoji}</span>}
+          <span className="font-medium">{section.title}</span>
+        </span>
+        <span className="text-xs text-zinc-500 ml-auto">{trackCount} tracks</span>
+      </button>
+      <button
+        onClick={() => { setEditTitle(section.title); setEditEmoji(section.emoji || ''); setEditing(true) }}
+        className="text-zinc-400 hover:text-indigo-400 p-1 rounded hover:bg-zinc-700/50 transition-colors"
+        title="Edit section name"
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        onClick={onDelete}
+        className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-zinc-700/50 transition-colors"
+        title="Delete section"
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  )
+}
+
+
+// ─── Playlist Detail Panel ───
+function PlaylistDetailPanel({
+  playlistId,
+  onClose,
+  onPlaylistDeleted,
+}: {
+  playlistId: string
+  onClose: () => void
+  onPlaylistDeleted: (id: string) => void
+}) {
+  const { play, currentTrack, isPlaying, pause, resume } = usePlayer()
+  const { user } = useAuth()
+
+  const [playlist, setPlaylist] = useState<Playlist | null>(null)
+  const [sections, setSections] = useState<Section[]>([])
+  const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>([])
+  const [allTracks, setAllTracks] = useState<Track[]>([])
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [showAddSection, setShowAddSection] = useState(false)
+  const [newSectionTitle, setNewSectionTitle] = useState('')
+  const [newSectionEmoji, setNewSectionEmoji] = useState('')
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [showShare, setShowShare] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [libraryTarget, setLibraryTarget] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [artworkUrl, setArtworkUrl] = useState<string | null>(null)
+  const [uploadingArtwork, setUploadingArtwork] = useState(false)
+  const [trackArtworkUrls, setTrackArtworkUrls] = useState<Record<string, string>>({})
+  const [unsectionedLabel, setUnsectionedLabel] = useState('Unsectioned')
+  const [editingUnsectioned, setEditingUnsectioned] = useState(false)
+  const [unsectionedDraft, setUnsectionedDraft] = useState('')
+  const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const loadData = useCallback(async () => {
+    if (!playlistId) return
+    setLoading(true)
+    const [pl, secs, pts, tracks] = await Promise.all([
+      getPlaylist(playlistId),
+      listSections(playlistId),
+      listPlaylistTracks(playlistId),
+      listTracks(),
+    ])
+    setPlaylist(pl)
+    setSections(secs)
+    setPlaylistTracks(pts)
+    setAllTracks(tracks)
+    setExpandedSections(prev => prev.size > 0 ? prev : new Set(secs.map(s => s.id)))
+    setLoading(false)
+
+    if (pl.artwork_path) {
+      try {
+        const url = await getArtworkUrl(pl.artwork_path)
+        setArtworkUrl(url)
+      } catch {
+        setArtworkUrl(null)
+      }
+    } else {
+      setArtworkUrl(null)
+    }
+
+    const artworkMap: Record<string, string> = {}
+    await Promise.all(
+      tracks.filter(t => t.artwork_path).map(async (t) => {
+        try {
+          artworkMap[t.id] = await getTrackArtworkUrl(t.artwork_path!)
+        } catch {}
+      })
+    )
+    setTrackArtworkUrls(artworkMap)
+  }, [playlistId])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const handlePlay = async (track: Track) => {
+    if (currentTrack?.id === track.id) {
+      isPlaying ? pause() : resume()
+      return
+    }
+    const path = track.storage_path || track.file_url
+    if (!path) return
+    const url = await getSignedUrl(path)
+    play(track, url, trackArtworkUrls[track.id])
+  }
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev)
+      next.has(sectionId) ? next.delete(sectionId) : next.add(sectionId)
+      return next
+    })
+  }
+
+  const handleAddSection = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!playlistId || !newSectionTitle.trim()) return
+    await createSection(playlistId, newSectionTitle.trim(), newSectionEmoji.trim() || null, sections.length)
+    setNewSectionTitle('')
+    setNewSectionEmoji('')
+    setShowAddSection(false)
+    loadData()
+  }
+
+  const handleRenameSection = async (sectionId: string, title: string, emoji: string | null) => {
+    await updateSection(sectionId, { title, emoji })
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, title, emoji } : s))
+  }
+
+  const handleDeleteSection = async (sectionId: string) => {
+    if (!confirm('Delete this section? Tracks in it will be removed from the playlist.')) return
+    await deleteSection(sectionId)
+    loadData()
+  }
+
+  const handleAddTrackFromLibrary = async (trackId: string) => {
+    if (!playlistId) return
+    const sectionTracks = playlistTracks.filter(pt =>
+      libraryTarget ? pt.section_id === libraryTarget : !pt.section_id
+    )
+    await addTrackToPlaylist(playlistId, trackId, libraryTarget, sectionTracks.length)
+    loadData()
+  }
+
+  const handleRemoveTrack = async (ptId: string) => {
+    await removeTrackFromPlaylist(ptId)
+    loadData()
+  }
+
+  const handleDeletePlaylist = async () => {
+    if (!confirm('Delete this playlist?')) return
+    await deletePlaylist(playlistId)
+    onPlaylistDeleted(playlistId)
+  }
+
+  const handleSaveTitle = async () => {
+    if (!playlistId || !titleDraft.trim()) return
+    await updatePlaylist(playlistId, { title: titleDraft.trim() })
+    setPlaylist(prev => prev ? { ...prev, title: titleDraft.trim() } : prev)
+    setEditingTitle(false)
+  }
+
+  const handleArtworkUpload = async () => {
+    if (!playlistId) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const maxSize = 5 * 1024 * 1024
+      if (file.size > maxSize) {
+        alert('Image must be under 5MB.')
+        return
+      }
+      setUploadingArtwork(true)
+      try {
+        const path = await uploadPlaylistArtwork(playlistId, file)
+        const url = await getArtworkUrl(path)
+        setArtworkUrl(url)
+        setPlaylist(prev => prev ? { ...prev, artwork_path: path } : prev)
+      } catch (err: any) {
+        alert('Failed to upload artwork: ' + (err.message || 'Unknown error'))
+      } finally {
+        setUploadingArtwork(false)
+      }
+    }
+    input.click()
+  }
+
+  const openLibrary = (sectionId: string | null) => {
+    setLibraryTarget(sectionId)
+    setShowLibrary(true)
+  }
+
+  const handleUploadToPlaylist = async (sectionId: string | null) => {
+    if (!user || !playlistId) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.accept = 'audio/*'
+    input.onchange = async () => {
+      if (!input.files?.length) return
+      setUploading(true)
+      const files = Array.from(input.files)
+      const sectionTracks = playlistTracks.filter(pt =>
+        sectionId ? pt.section_id === sectionId : !pt.section_id
+      )
+      let pos = sectionTracks.length
+      for (const file of files) {
+        try {
+          const track = await uploadTrack(file, user.id)
+          await addTrackToPlaylist(playlistId, track.id, sectionId, pos)
+          pos++
+        } catch (err) {
+          console.error('Upload failed:', err)
+        }
+      }
+      setUploading(false)
+      loadData()
+    }
+    input.click()
+  }
+
+  const handleTrackDragStart = (event: DragStartEvent) => {
+    setActiveTrackId(event.active.id as string)
+  }
+
+  const handleTrackDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    setActiveTrackId(null)
+
+    if (!over) return
+
+    const activeTrack = playlistTracks.find(pt => pt.id === active.id)
+    if (!activeTrack) return
+
+    // Check if dropped on Library (remove from playlist)
+    if (over.id === 'library-drop-zone') {
+      await removeTrackFromPlaylist(activeTrack.id)
+      loadData()
+      return
+    }
+
+    // Check if dropped on a section header (move to that section)
+    const sectionDropMatch = String(over.id).match(/^section-drop-(.+)$/)
+    const unsectionedDrop = over.id === 'unsectioned-drop-zone'
+
+    if (sectionDropMatch || unsectionedDrop) {
+      const targetSectionId = sectionDropMatch ? sectionDropMatch[1] : null
+      if (activeTrack.section_id !== targetSectionId) {
+        // Move to new section
+        const targetTracks = playlistTracks.filter(pt =>
+          targetSectionId ? pt.section_id === targetSectionId : !pt.section_id
+        )
+        const newPosition = targetTracks.length
+
+        // Update locally
+        const updated = playlistTracks.map(pt =>
+          pt.id === activeTrack.id ? { ...pt, section_id: targetSectionId, position: newPosition } : pt
+        )
+        setPlaylistTracks(updated)
+
+        // Persist
+        await reorderPlaylistTracks([{ id: activeTrack.id, position: newPosition, section_id: targetSectionId }])
+      }
+      return
+    }
+
+    // Reorder within same section or move to different section
+    const overTrack = playlistTracks.find(pt => pt.id === over.id)
+    if (!overTrack) return
+
+    const sourceSectionId = activeTrack.section_id
+    const targetSectionId = overTrack.section_id
+
+    if (sourceSectionId === targetSectionId) {
+      // Same section - just reorder
+      const sectionTracks = playlistTracks
+        .filter(pt => pt.section_id === sourceSectionId)
+        .sort((a, b) => a.position - b.position)
+
+      const oldIndex = sectionTracks.findIndex(pt => pt.id === active.id)
+      const newIndex = sectionTracks.findIndex(pt => pt.id === over.id)
+      if (oldIndex === -1 || newIndex === -1) return
+
+      const reordered = arrayMove(sectionTracks, oldIndex, newIndex)
+      const updated = playlistTracks.map(pt => {
+        const idx = reordered.findIndex(r => r.id === pt.id)
+        return idx >= 0 ? { ...pt, position: idx } : pt
+      })
+      setPlaylistTracks(updated)
+      await reorderPlaylistTracks(reordered.map((pt, i) => ({ id: pt.id, position: i, section_id: pt.section_id })))
+    } else {
+      // Different section - move track
+      const targetTracks = playlistTracks
+        .filter(pt => pt.section_id === targetSectionId)
+        .sort((a, b) => a.position - b.position)
+
+      const overIndex = targetTracks.findIndex(pt => pt.id === over.id)
+      const newPosition = overIndex >= 0 ? overIndex : targetTracks.length
+
+      // Update locally
+      const updated = playlistTracks.map(pt =>
+        pt.id === activeTrack.id ? { ...pt, section_id: targetSectionId, position: newPosition } : pt
+      )
+      setPlaylistTracks(updated)
+
+      // Persist
+      await reorderPlaylistTracks([{ id: activeTrack.id, position: newPosition, section_id: targetSectionId }])
+      loadData() // Refresh to get correct positions
+    }
+  }
+
+
+  const availableTracks = allTracks.filter(t => !playlistTracks.some(pt => pt.track_id === t.id))
+
+  const renderTrackList = (sectionId: string | null) => {
+    const tracks = playlistTracks
+      .filter(pt => sectionId ? pt.section_id === sectionId : !pt.section_id)
+      .sort((a, b) => a.position - b.position)
+
+    return (
+      <div className="space-y-1">
+        <SortableContext items={tracks.map(pt => pt.id)} strategy={verticalListSortingStrategy}>
+          {tracks.map(pt => (
+            <SortableTrackRow
+              key={pt.id}
+              pt={pt}
+              currentTrack={currentTrack}
+              isPlaying={isPlaying}
+              onPlay={handlePlay}
+              onRemove={handleRemoveTrack}
+              artworkUrl={pt.track?.id ? trackArtworkUrls[pt.track.id] : undefined}
+            />
+          ))}
+        </SortableContext>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => openLibrary(sectionId)}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <Plus size={14} />
+            Add track
+          </button>
+          <button
+            onClick={() => handleUploadToPlaylist(sectionId)}
+            disabled={uploading}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <Upload size={14} />
+            {uploading ? 'Uploading...' : 'Upload'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Droppable section zone component
+  function DroppableSectionZone({ sectionId, children }: { sectionId: string | null, children: React.ReactNode }) {
+    const { setNodeRef, isOver } = useDroppable({
+      id: sectionId ? `section-drop-${sectionId}` : 'unsectioned-drop-zone',
+    })
+    return (
+      <div ref={setNodeRef} className={`transition-colors ${isOver ? 'ring-2 ring-indigo-500 ring-inset' : ''}`}>
+        {children}
+      </div>
+    )
+  }
+
+  // Library drop zone
+  function LibraryDropZone({ children }: { children: React.ReactNode }) {
+    const { setNodeRef, isOver } = useDroppable({ id: 'library-drop-zone' })
+    return (
+      <div ref={setNodeRef} className={`flex-1 overflow-auto p-2 transition-colors ${isOver ? 'bg-red-900/20 ring-2 ring-red-500 ring-inset' : ''}`}>
+        {isOver && <p className="text-xs text-red-400 text-center py-2 mb-2">Drop to remove from playlist</p>}
+        {children}
+      </div>
+    )
+  }
+
+  const activeTrack = activeTrackId ? playlistTracks.find(pt => pt.id === activeTrackId) : null
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-full">
+        <Loader2 className="animate-spin text-zinc-500" size={24} />
+      </div>
+    )
+  }
+
+  if (!playlist) {
+    return <div className="p-6 text-zinc-400">Playlist not found.</div>
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Panel Header */}
+      <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={handleArtworkUpload}
+            disabled={uploadingArtwork}
+            className="relative w-12 h-12 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-500 flex items-center justify-center overflow-hidden group transition-colors shrink-0"
+          >
+            {artworkUrl ? (
+              <>
+                <img src={artworkUrl} alt="" className="w-full h-full object-cover" onError={() => setArtworkUrl(null)} />
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                  <Pencil size={12} className="text-white" />
+                </div>
+              </>
+            ) : uploadingArtwork ? (
+              <Loader2 size={16} className="text-zinc-500 animate-spin" />
+            ) : (
+              <Music size={16} className="text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+            )}
+          </button>
+          <div className="min-w-0">
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={titleDraft}
+                  onChange={e => setTitleDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveTitle()}
+                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                  autoFocus
+                />
+                <button onClick={handleSaveTitle} className="text-xs text-indigo-400 hover:text-indigo-300">Save</button>
+                <button onClick={() => setEditingTitle(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Cancel</button>
+              </div>
+            ) : (
+              <h2
+                className="font-semibold truncate cursor-pointer hover:text-zinc-300 transition-colors"
+                onClick={() => { setTitleDraft(playlist.title); setEditingTitle(true) }}
+              >
+                {playlist.title}
+              </h2>
+            )}
+            {playlist.client_name && (
+              <p className="text-xs text-zinc-500 truncate">For {playlist.client_name}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowLibrary(!showLibrary)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${showLibrary ? 'bg-indigo-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700'}`}
+          >
+            <Library size={18} />
+            Library
+          </button>
+          <button
+            onClick={() => setShowShare(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Share2 size={18} />
+            Share
+          </button>
+          <button
+            onClick={handleDeletePlaylist}
+            className="flex items-center gap-2 px-3 py-2 bg-zinc-800 text-zinc-300 hover:text-red-400 hover:bg-zinc-800/80 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 size={18} />
+            Delete
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors ml-1"
+          >
+            <X size={20} />
+          </button>
+        </div>
+      </div>
+
+      {/* Panel Content */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleTrackDragStart}
+        onDragEnd={handleTrackDragEnd}
+      >
+        <div className="flex flex-1 overflow-hidden">
+          <div className="flex-1 overflow-auto p-4">
+            <div className="space-y-4">
+            {sections.map(section => (
+              <DroppableSectionZone key={section.id} sectionId={section.id}>
+                <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                  <SortableSectionHeader
+                    section={section}
+                    trackCount={playlistTracks.filter(pt => pt.section_id === section.id).length}
+                    expanded={expandedSections.has(section.id)}
+                    onToggle={() => toggleSection(section.id)}
+                    onDelete={() => handleDeleteSection(section.id)}
+                    onRename={(title, emoji) => handleRenameSection(section.id, title, emoji)}
+                    listeners={{}}
+                    attributes={{}}
+                  />
+                  {expandedSections.has(section.id) && (
+                    <div className="px-4 py-2">
+                      {renderTrackList(section.id)}
+                    </div>
+                  )}
+                </div>
+              </DroppableSectionZone>
+            ))}
+
+            {playlistTracks.some(pt => !pt.section_id) && (
+              <DroppableSectionZone sectionId={null}>
+                <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900">
+                    {editingUnsectioned ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <input
+                          value={unsectionedDraft}
+                          onChange={e => setUnsectionedDraft(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              setUnsectionedLabel(unsectionedDraft.trim() || 'Unsectioned')
+                              setEditingUnsectioned(false)
+                            }
+                            if (e.key === 'Escape') setEditingUnsectioned(false)
+                          }}
+                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => {
+                            setUnsectionedLabel(unsectionedDraft.trim() || 'Unsectioned')
+                            setEditingUnsectioned(false)
+                          }}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingUnsectioned(false)}
+                          className="text-xs text-zinc-500 hover:text-zinc-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="text-sm text-zinc-400 flex-1">{unsectionedLabel}</span>
+                        <button
+                          onClick={() => {
+                            setUnsectionedDraft(unsectionedLabel)
+                            setEditingUnsectioned(true)
+                          }}
+                          className="text-zinc-400 hover:text-indigo-400 p-1 rounded hover:bg-zinc-700/50 transition-colors"
+                          title="Edit label"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="px-4 py-2">
+                    {renderTrackList(null)}
+                  </div>
+                </div>
+              </DroppableSectionZone>
+            )}
+
+          {showAddSection ? (
+            <form onSubmit={handleAddSection} className="border border-zinc-700 rounded-lg p-4 space-y-3">
+              <div className="flex gap-3">
+                <input
+                  value={newSectionEmoji}
+                  onChange={e => setNewSectionEmoji(e.target.value)}
+                  placeholder="Emoji"
+                  className="w-14 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-center text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <input
+                  value={newSectionTitle}
+                  onChange={e => setNewSectionTitle(e.target.value)}
+                  placeholder="Section title"
+                  required
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowAddSection(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
+                <button type="submit" className="text-sm text-indigo-400 hover:text-indigo-300 font-medium">Add Section</button>
+              </div>
+            </form>
+          ) : (
+            <button
+              onClick={() => setShowAddSection(true)}
+              className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <Plus size={16} />
+              Add Section
+            </button>
+            )}
+          </div>
+        </div>
+
+          {/* Track Library Sidebar */}
+          {showLibrary && (
+            <div className="w-64 bg-zinc-900 border-l border-zinc-800 flex flex-col shrink-0">
+          <div className="flex items-center justify-between p-3 border-b border-zinc-800">
+            <h3 className="font-semibold text-sm">Library</h3>
+            <button onClick={() => setShowLibrary(false)} className="text-zinc-400 hover:text-white">
+              <X size={16} />
+            </button>
+          </div>
+
+          {sections.length > 0 && (
+            <div className="px-3 py-2 border-b border-zinc-800">
+              <select
+                value={libraryTarget ?? ''}
+                onChange={e => setLibraryTarget(e.target.value || null)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Unsectioned</option>
+                {sections.map(sec => (
+                  <option key={sec.id} value={sec.id}>
+                    {sec.emoji ? `${sec.emoji} ` : ''}{sec.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <LibraryDropZone>
+            {availableTracks.length === 0 ? (
+              <p className="text-xs text-zinc-500 p-2 text-center">All tracks in playlist.</p>
+            ) : (
+              availableTracks.map(track => (
+                <div
+                  key={track.id}
+                  className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-zinc-800 transition-colors group"
+                >
+                  <Music size={12} className="text-zinc-500 shrink-0" />
+                  <span className="flex-1 text-xs truncate">{track.title}</span>
+                  <button
+                    onClick={() => handleAddTrackFromLibrary(track.id)}
+                    className="flex items-center justify-center w-6 h-6 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white shrink-0 transition-colors"
+                    title="Add to playlist"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+              ))
+            )}
+            </LibraryDropZone>
+          </div>
+          )}
+        </div>
+
+        {/* Drag Overlay */}
+      <DragOverlay>
+        {activeTrack && (
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-800 border border-indigo-500 shadow-xl">
+            <GripVertical size={16} className="text-zinc-500" />
+            <div className="w-9 h-9 rounded-md bg-zinc-700 flex items-center justify-center shrink-0">
+              <Music size={14} className="text-zinc-500" />
+            </div>
+            <span className="text-sm">{activeTrack.track?.title}</span>
+          </div>
+        )}
+      </DragOverlay>
+      </DndContext>
+
+      {showShare && (
+        <ShareDialog playlistId={playlistId} onClose={() => setShowShare(false)} />
+      )}
+    </div>
+  )
+}
+
+// ─── Main Playlists Page ───
 export default function PlaylistsPage() {
   const { user } = useAuth()
-  const navigate = useNavigate()
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [title, setTitle] = useState('')
   const [clientName, setClientName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [duplicating, setDuplicating] = useState<string | null>(null)
+  const [artworkUrls, setArtworkUrls] = useState<Record<string, string>>({})
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null)
 
   useEffect(() => {
-    listPlaylists().then(setPlaylists).finally(() => setLoading(false))
+    listPlaylists().then(async (pls) => {
+      setPlaylists(pls)
+      const artworkMap: Record<string, string> = {}
+      await Promise.all(
+        pls.filter(p => p.artwork_path).map(async (p) => {
+          try {
+            artworkMap[p.id] = await getArtworkUrl(p.artwork_path!)
+          } catch {}
+        })
+      )
+      setArtworkUrls(artworkMap)
+    }).finally(() => setLoading(false))
   }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -25,49 +854,124 @@ export default function PlaylistsPage() {
     setCreating(true)
     try {
       const pl = await createPlaylist(title.trim(), clientName.trim() || null, null, user.id)
-      navigate(`/playlists/${pl.id}`)
+      setPlaylists(prev => [pl, ...prev])
+      setSelectedPlaylist(pl.id)
+      setShowCreate(false)
+      setTitle('')
+      setClientName('')
     } finally {
       setCreating(false)
     }
   }
 
+  const handleDuplicate = async (e: React.MouseEvent, playlistId: string) => {
+    e.stopPropagation()
+    if (!user) return
+    setDuplicating(playlistId)
+    try {
+      const newPl = await duplicatePlaylist(playlistId, user.id)
+      setPlaylists(prev => [newPl, ...prev])
+      setSelectedPlaylist(newPl.id)
+    } finally {
+      setDuplicating(null)
+    }
+  }
+
+  const handlePlaylistDeleted = (id: string) => {
+    setPlaylists(prev => prev.filter(p => p.id !== id))
+    setSelectedPlaylist(null)
+  }
+
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Playlists</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          <Plus size={16} />
-          New Playlist
-        </button>
+    <div className="flex h-full">
+      {/* Playlists List */}
+      <div className={`${selectedPlaylist ? 'w-80' : 'flex-1 max-w-2xl'} border-r border-zinc-800 flex flex-col transition-all shrink-0`}>
+        <div className="p-4 border-b border-zinc-800 flex items-center justify-between shrink-0">
+          <h1 className="text-lg font-bold">Playlists</h1>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <Plus size={14} />
+            New
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="animate-spin text-zinc-500" size={24} />
+          </div>
+        ) : playlists.length === 0 ? (
+          <div className="text-center py-20 px-4">
+            <ListMusic className="mx-auto mb-3 text-zinc-600" size={40} />
+            <p className="text-zinc-400 text-sm">No playlists yet</p>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-auto">
+            {playlists.map(pl => (
+              <div
+                key={pl.id}
+                onClick={() => setSelectedPlaylist(pl.id)}
+                className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors group border-b border-zinc-800/50 ${
+                  selectedPlaylist === pl.id
+                    ? 'bg-zinc-800/70'
+                    : 'hover:bg-zinc-800/30'
+                }`}
+              >
+                {/* Artwork */}
+                <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0 overflow-hidden">
+                  {artworkUrls[pl.id] ? (
+                    <img src={artworkUrls[pl.id]} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Music size={16} className="text-zinc-600" />
+                  )}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-sm truncate">{pl.title}</h3>
+                  <p className="text-xs text-zinc-500 truncate">
+                    {pl.client_name ? `For ${pl.client_name}` : 'No client'}
+                  </p>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <button
+                    onClick={(e) => handleDuplicate(e, pl.id)}
+                    disabled={duplicating === pl.id}
+                    className="p-1.5 rounded-md hover:bg-zinc-700 text-zinc-500 hover:text-white disabled:opacity-50"
+                    title="Duplicate"
+                  >
+                    {duplicating === pl.id ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Copy size={12} />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20">
-          <Loader2 className="animate-spin text-zinc-500" size={24} />
-        </div>
-      ) : playlists.length === 0 ? (
-        <div className="text-center py-20">
-          <ListMusic className="mx-auto mb-3 text-zinc-600" size={48} />
-          <p className="text-zinc-400">No playlists yet. Create one to get started.</p>
+      {/* Playlist Detail Panel */}
+      {selectedPlaylist ? (
+        <div className="flex-1 relative">
+          <PlaylistDetailPanel
+            key={selectedPlaylist}
+            playlistId={selectedPlaylist}
+            onClose={() => setSelectedPlaylist(null)}
+            onPlaylistDeleted={handlePlaylistDeleted}
+          />
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {playlists.map(pl => (
-            <button
-              key={pl.id}
-              onClick={() => navigate(`/playlists/${pl.id}`)}
-              className="text-left bg-zinc-900 border border-zinc-800 rounded-lg p-5 hover:border-zinc-600 transition-colors"
-            >
-              <h3 className="font-semibold truncate">{pl.title}</h3>
-              {pl.client_name && <p className="text-sm text-zinc-400 mt-1">For {pl.client_name}</p>}
-              <p className="text-xs text-zinc-500 mt-2">
-                {new Date(pl.created_at).toLocaleDateString()}
-              </p>
-            </button>
-          ))}
+        <div className="flex-1 flex items-center justify-center text-zinc-500">
+          <div className="text-center">
+            <ListMusic size={48} className="mx-auto mb-3 text-zinc-700" />
+            <p className="text-sm">Select a playlist to view details</p>
+          </div>
         </div>
       )}
 

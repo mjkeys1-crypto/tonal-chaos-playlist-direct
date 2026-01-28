@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Share2, Library, X, Upload, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Pause, Share2, Library, X, Upload, Pencil } from 'lucide-react'
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -12,9 +12,9 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   getPlaylist, listSections, listPlaylistTracks, createSection, deleteSection,
   addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist, updatePlaylist,
-  reorderPlaylistTracks, updateSection,
+  reorderPlaylistTracks, updateSection, uploadPlaylistArtwork, getArtworkUrl,
 } from '../lib/api/playlists'
-import { listTracks, getSignedUrl, uploadTrack } from '../lib/api/tracks'
+import { listTracks, getSignedUrl, uploadTrack, getTrackArtworkUrl } from '../lib/api/tracks'
 import { usePlayer } from '../context/PlayerContext'
 import { useAuth } from '../context/AuthContext'
 import ShareDialog from '../components/shares/ShareDialog'
@@ -27,32 +27,55 @@ function formatDuration(s: number | null) {
 
 // ─── Sortable Track Row ───
 function SortableTrackRow({
-  pt, currentTrack, isPlaying, onPlay, onRemove,
+  pt, currentTrack, isPlaying, onPlay, onRemove, artworkUrl,
 }: {
   pt: PlaylistTrack
   currentTrack: Track | null
   isPlaying: boolean
   onPlay: (t: Track) => void
   onRemove: (id: string) => void
+  artworkUrl?: string
 }) {
   const track = pt.track
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pt.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
 
   if (!track) return null
+  const isCurrent = currentTrack?.id === track.id
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`flex items-center gap-3 px-3 py-2 rounded-lg group hover:bg-zinc-800/50 ${
-        currentTrack?.id === track.id ? 'bg-zinc-800/50' : ''
+        isCurrent ? 'bg-zinc-800/50' : ''
       }`}
     >
       <button {...attributes} {...listeners} className="touch-none text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing">
         <GripVertical size={14} />
       </button>
-      <button onClick={() => onPlay(track)} className="text-zinc-400 hover:text-white">
-        <Play size={14} fill={currentTrack?.id === track.id && isPlaying ? 'currentColor' : 'none'} />
+      <button
+        onClick={() => onPlay(track)}
+        className="relative w-9 h-9 rounded-md bg-zinc-800 flex items-center justify-center shrink-0 overflow-hidden group/play"
+      >
+        {artworkUrl ? (
+          <img src={artworkUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Music size={14} className="text-zinc-600" />
+        )}
+        <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+          isCurrent && isPlaying
+            ? 'opacity-100 bg-indigo-600/80'
+            : isCurrent
+            ? 'opacity-100 bg-black/60'
+            : 'opacity-0 group-hover/play:opacity-100 bg-black/60'
+        }`}>
+          {isCurrent && isPlaying ? (
+            <Pause size={14} className="text-white" fill="currentColor" />
+          ) : (
+            <Play size={14} className="text-white ml-0.5" fill="currentColor" />
+          )}
+        </div>
       </button>
       <span className="flex-1 text-sm truncate">{track.title}</span>
       <span className="text-xs text-zinc-500 tabular-nums">{formatDuration(track.duration)}</span>
@@ -194,6 +217,9 @@ export default function PlaylistDetail() {
   const [showLibrary, setShowLibrary] = useState(false)
   const [libraryTarget, setLibraryTarget] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [artworkUrl, setArtworkUrl] = useState<string | null>(null)
+  const [uploadingArtwork, setUploadingArtwork] = useState(false)
+  const [trackArtworkUrls, setTrackArtworkUrls] = useState<Record<string, string>>({})
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -211,6 +237,29 @@ export default function PlaylistDetail() {
     setAllTracks(tracks)
     setExpandedSections(prev => prev.size > 0 ? prev : new Set(secs.map(s => s.id)))
     setLoading(false)
+
+    // Load artwork URL if exists
+    if (pl.artwork_path) {
+      try {
+        const url = await getArtworkUrl(pl.artwork_path)
+        setArtworkUrl(url)
+      } catch {
+        setArtworkUrl(null)
+      }
+    } else {
+      setArtworkUrl(null)
+    }
+
+    // Load track artwork URLs
+    const artworkMap: Record<string, string> = {}
+    await Promise.all(
+      tracks.filter(t => t.artwork_path).map(async (t) => {
+        try {
+          artworkMap[t.id] = await getTrackArtworkUrl(t.artwork_path!)
+        } catch {}
+      })
+    )
+    setTrackArtworkUrls(artworkMap)
   }, [id])
 
   useEffect(() => { loadData() }, [loadData])
@@ -223,7 +272,7 @@ export default function PlaylistDetail() {
     const path = track.storage_path || track.file_url
     if (!path) return
     const url = await getSignedUrl(path)
-    play(track, url)
+    play(track, url, trackArtworkUrls[track.id])
   }
 
   const toggleSection = (sectionId: string) => {
@@ -280,6 +329,37 @@ export default function PlaylistDetail() {
     await updatePlaylist(id, { title: titleDraft.trim() })
     setPlaylist(prev => prev ? { ...prev, title: titleDraft.trim() } : prev)
     setEditingTitle(false)
+  }
+
+  const handleArtworkUpload = async () => {
+    if (!id) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+
+      // 5MB limit for artwork
+      const maxSize = 5 * 1024 * 1024
+      if (file.size > maxSize) {
+        alert('Image must be under 5MB. Please choose a smaller file or compress it.')
+        return
+      }
+
+      setUploadingArtwork(true)
+      try {
+        const path = await uploadPlaylistArtwork(id, file)
+        const url = await getArtworkUrl(path)
+        setArtworkUrl(url)
+        setPlaylist(prev => prev ? { ...prev, artwork_path: path } : prev)
+      } catch (err: any) {
+        alert('Failed to upload artwork: ' + (err.message || 'Unknown error'))
+      } finally {
+        setUploadingArtwork(false)
+      }
+    }
+    input.click()
   }
 
   const openLibrary = (sectionId: string | null) => {
@@ -391,6 +471,7 @@ export default function PlaylistDetail() {
                 isPlaying={isPlaying}
                 onPlay={handlePlay}
                 onRemove={handleRemoveTrack}
+                artworkUrl={pt.track?.id ? trackArtworkUrls[pt.track.id] : undefined}
               />
             ))}
           </SortableContext>
@@ -426,7 +507,36 @@ export default function PlaylistDetail() {
         </button>
 
         <div className="flex items-start justify-between mb-6">
-          <div>
+          <div className="flex items-start gap-4">
+            {/* Artwork */}
+            <button
+              onClick={handleArtworkUpload}
+              disabled={uploadingArtwork}
+              className="relative w-20 h-20 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-500 flex items-center justify-center overflow-hidden group transition-colors shrink-0"
+              title={artworkUrl ? 'Change artwork' : 'Add artwork'}
+            >
+              {artworkUrl ? (
+                <>
+                  <img
+                    src={artworkUrl}
+                    alt=""
+                    className="w-full h-full object-cover"
+                    onError={() => setArtworkUrl(null)}
+                  />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <Pencil size={16} className="text-white" />
+                  </div>
+                </>
+              ) : uploadingArtwork ? (
+                <Loader2 size={20} className="text-zinc-500 animate-spin" />
+              ) : (
+                <div className="text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                  <Music size={24} />
+                </div>
+              )}
+            </button>
+
+            <div>
             {editingTitle ? (
               <div className="flex items-center gap-2">
                 <input
@@ -450,6 +560,7 @@ export default function PlaylistDetail() {
             {playlist.client_name && (
               <p className="text-sm text-zinc-400 mt-1">For {playlist.client_name}</p>
             )}
+            </div>
           </div>
           <div className="flex gap-2">
             <button

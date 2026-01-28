@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown } from 'lucide-react'
+import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown, Music } from 'lucide-react'
+import WaveSurfer from 'wavesurfer.js'
 import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
 import type { Playlist, Section, PlaylistTrack, Track } from '../lib/types'
@@ -52,9 +53,13 @@ export default function SharedPlaylist() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const audioRef = useRef<HTMLAudioElement>(null)
+  const wsRef = useRef<WaveSurfer | null>(null)
+  const waveContainerRef = useRef<HTMLDivElement | null>(null)
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null)
   const [zipping, setZipping] = useState(false)
   const [zipProgress, setZipProgress] = useState('')
+  const [artworkUrls, setArtworkUrls] = useState<Record<string, string>>({})
+  const [playingArtwork, setPlayingArtwork] = useState<string | null>(null)
 
   useEffect(() => {
     loadShare()
@@ -98,6 +103,19 @@ export default function SharedPlaylist() {
     setNeedsPassword(false)
     setLoading(false)
 
+    // Load artwork URLs for tracks that have embedded artwork
+    const tracks = (pts.data || []).map(pt => pt.track).filter(Boolean) as Track[]
+    const artworkMap: Record<string, string> = {}
+    await Promise.all(
+      tracks.filter(t => t.artwork_path).map(async (t) => {
+        try {
+          const { data } = await supabase.storage.from('tracks').createSignedUrl(t.artwork_path!, 3600)
+          if (data) artworkMap[t.id] = data.signedUrl
+        } catch {}
+      })
+    )
+    setArtworkUrls(artworkMap)
+
     // Log page view
     supabase.from('analytics_events').insert({
       event_type: 'page_view',
@@ -117,16 +135,83 @@ export default function SharedPlaylist() {
     await loadPlaylistData(share)
   }
 
+  const initWaveSurfer = useCallback((url: string) => {
+    if (!waveContainerRef.current) return
+
+    if (wsRef.current) {
+      wsRef.current.destroy()
+      wsRef.current = null
+    }
+
+    const ws = WaveSurfer.create({
+      container: waveContainerRef.current,
+      url,
+      waveColor: 'rgba(255,255,255,0.15)',
+      progressColor: '#818cf8',
+      cursorColor: '#a5b4fc',
+      cursorWidth: 1,
+      barWidth: 2,
+      barGap: 1,
+      barRadius: 2,
+      height: 36,
+      normalize: true,
+      interact: true,
+    })
+
+    wsRef.current = ws
+    ws.on('ready', () => {
+      setDuration(ws.getDuration())
+      ws.play().catch(() => {})
+    })
+    ws.on('timeupdate', (t: number) => setCurrentTime(t))
+    ws.on('finish', () => {
+      setIsPlaying(false)
+      setPlayingTrack(null)
+      setPlayingUrl(null)
+      setPlayingArtwork(null)
+    })
+    ws.on('play', () => setIsPlaying(true))
+    ws.on('pause', () => setIsPlaying(false))
+  }, [])
+
+  // When playingUrl changes and container is already mounted, init
+  useEffect(() => {
+    if (playingUrl) initWaveSurfer(playingUrl)
+  }, [playingUrl, initWaveSurfer])
+
+  // Callback ref for first mount of the waveform container
+  const setWaveContainer = useCallback((node: HTMLDivElement | null) => {
+    waveContainerRef.current = node
+    if (node && playingUrl) initWaveSurfer(playingUrl)
+  }, [playingUrl, initWaveSurfer])
+
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.destroy()
+        wsRef.current = null
+      }
+    }
+  }, [])
+
   const handlePlay = async (track: Track) => {
     if (playingTrack?.id === track.id) {
+      const ws = wsRef.current
+      if (!ws) return
       if (isPlaying) {
-        audioRef.current?.pause()
-        setIsPlaying(false)
+        ws.pause()
       } else {
-        audioRef.current?.play()
-        setIsPlaying(true)
+        ws.play().catch(() => {})
       }
       return
+    }
+
+    // Stop current track before switching
+    if (wsRef.current) {
+      wsRef.current.pause()
+      wsRef.current.destroy()
+      wsRef.current = null
     }
 
     const path = track.storage_path || track.file_url
@@ -137,10 +222,8 @@ export default function SharedPlaylist() {
 
     setPlayingTrack(track)
     setIsPlaying(true)
-    if (audioRef.current) {
-      audioRef.current.src = data.signedUrl
-      audioRef.current.play()
-    }
+    setPlayingUrl(data.signedUrl)
+    setPlayingArtwork(artworkUrls[track.id] || null)
 
     supabase.from('play_events').insert({
       track_id: track.id,
@@ -161,8 +244,10 @@ export default function SharedPlaylist() {
     const a = document.createElement('a')
     a.href = url
     a.download = `${track.title}.${track.format || 'wav'}`
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
 
     supabase.from('download_events').insert({
       track_id: track.id,
@@ -194,8 +279,10 @@ export default function SharedPlaylist() {
       const a = document.createElement('a')
       a.href = url
       a.download = `${share!.playlist.title}.zip`
+      document.body.appendChild(a)
       a.click()
-      URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
     } finally {
       setZipping(false)
       setZipProgress('')
@@ -210,29 +297,7 @@ export default function SharedPlaylist() {
     })
   }
 
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !duration) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const pct = (e.clientX - rect.left) / rect.width
-    audioRef.current.currentTime = pct * duration
-  }
-
-  // Audio events
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
-    const onTime = () => setCurrentTime(audio.currentTime)
-    const onDur = () => setDuration(audio.duration || 0)
-    const onEnd = () => { setIsPlaying(false); setPlayingTrack(null) }
-    audio.addEventListener('timeupdate', onTime)
-    audio.addEventListener('loadedmetadata', onDur)
-    audio.addEventListener('ended', onEnd)
-    return () => {
-      audio.removeEventListener('timeupdate', onTime)
-      audio.removeEventListener('loadedmetadata', onDur)
-      audio.removeEventListener('ended', onEnd)
-    }
-  }, [])
+  // (WaveSurfer handles seek, time, and duration)
 
   if (loading) {
     return (
@@ -291,26 +356,34 @@ export default function SharedPlaylist() {
   const renderTrack = (track: Track, index: number) => (
     <div
       key={track.id}
-      className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all ${
+      className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
         playingTrack?.id === track.id
           ? 'bg-white/[0.07] shadow-lg shadow-indigo-500/5'
           : 'hover:bg-white/[0.03]'
       }`}
     >
+      {/* Thumbnail with play overlay */}
       <button
         onClick={() => handlePlay(track)}
-        className={`w-9 h-9 flex items-center justify-center rounded-full transition-all shrink-0 ${
-          playingTrack?.id === track.id && isPlaying
-            ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30'
-            : 'bg-white/10 hover:bg-white/20 text-white'
-        }`}
+        className="relative w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0 group overflow-hidden"
       >
-        {playingTrack?.id === track.id && isPlaying
-          ? <Pause size={14} />
-          : <Play size={14} className="ml-0.5" />
-        }
+        {artworkUrls[track.id] ? (
+          <img src={artworkUrls[track.id]} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Music size={16} className="text-zinc-600" />
+        )}
+        <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${
+          playingTrack?.id === track.id
+            ? 'opacity-100 bg-indigo-500/80'
+            : 'opacity-0 group-hover:opacity-100 bg-black/60'
+        }`}>
+          {playingTrack?.id === track.id && isPlaying
+            ? <Pause size={14} className="text-white" />
+            : <Play size={14} className="text-white ml-0.5" />
+          }
+        </div>
       </button>
-      <span className="text-xs text-zinc-600 tabular-nums w-6 text-right shrink-0">{index + 1}</span>
+      <span className="text-xs text-zinc-600 tabular-nums w-5 text-right shrink-0">{index + 1}</span>
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-medium truncate ${
           playingTrack?.id === track.id ? 'text-indigo-300' : 'text-white'
@@ -332,7 +405,6 @@ export default function SharedPlaylist() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <audio ref={audioRef} />
 
       {/* Hero Header */}
       <header className="relative overflow-hidden border-b border-zinc-800/50">
@@ -340,7 +412,7 @@ export default function SharedPlaylist() {
         <div className="relative z-10 max-w-2xl mx-auto px-6 pt-10 pb-8">
           <div className="flex items-center gap-3 mb-6">
             <img src="/logo.png" alt="Tonal Chaos" className="w-10 h-10 object-contain" />
-            <span className="text-xs uppercase tracking-[0.25em] text-zinc-500 font-medium">Tonal Chaos</span>
+            <span className="text-xs uppercase tracking-[0.25em] font-semibold bg-gradient-to-r from-zinc-200 via-blue-300 to-indigo-400 bg-clip-text text-transparent" style={{ fontFamily: 'Rajdhani, sans-serif' }}>Tonal Chaos</span>
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">
             {playlist.client_name ? `Music for ${playlist.client_name}` : playlist.title}
@@ -422,38 +494,39 @@ export default function SharedPlaylist() {
 
       {/* Footer */}
       <footer className={`text-center py-8 text-xs text-zinc-700 ${playingTrack ? 'pb-24' : ''}`}>
-        Shared via Tonal Chaos
+        <span style={{ fontFamily: 'Rajdhani, sans-serif' }}>Shared via Tonal Chaos</span>
       </footer>
 
       {/* Now Playing Bar */}
       {playingTrack && (
         <div className="fixed bottom-0 left-0 right-0 bg-zinc-900/95 backdrop-blur-xl border-t border-zinc-800/50 shadow-2xl shadow-black/50">
-          {/* Progress bar */}
-          <div
-            onClick={handleSeek}
-            className="h-1 bg-zinc-800 cursor-pointer group"
-          >
-            <div
-              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-200 relative"
-              style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }}
-            >
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg" />
+          <div className="max-w-2xl mx-auto px-6 pt-3 pb-2">
+            {/* Top row: thumbnail, play button, title, time */}
+            <div className="flex items-center gap-3 mb-2">
+              {/* Thumbnail */}
+              <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0 overflow-hidden">
+                {playingArtwork ? (
+                  <img src={playingArtwork} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Music size={16} className="text-zinc-600" />
+                )}
+              </div>
+              <button
+                onClick={() => handlePlay(playingTrack)}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-white text-zinc-900 hover:scale-105 transition-transform shrink-0"
+              >
+                {isPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{playingTrack.title}</p>
+                {playingTrack.artist && <p className="text-xs text-zinc-500 truncate">{playingTrack.artist}</p>}
+              </div>
+              <span className="text-xs text-zinc-500 tabular-nums shrink-0">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
             </div>
-          </div>
-          <div className="max-w-2xl mx-auto px-6 py-3 flex items-center gap-4">
-            <button
-              onClick={() => handlePlay(playingTrack)}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white text-zinc-900 hover:scale-105 transition-transform shrink-0"
-            >
-              {isPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
-            </button>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{playingTrack.title}</p>
-              {playingTrack.artist && <p className="text-xs text-zinc-500 truncate">{playingTrack.artist}</p>}
-            </div>
-            <span className="text-xs text-zinc-500 tabular-nums shrink-0">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
+            {/* Full-width waveform */}
+            <div ref={setWaveContainer} className="w-full" />
           </div>
         </div>
       )}
