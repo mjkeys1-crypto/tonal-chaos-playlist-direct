@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown, Music } from 'lucide-react'
+import { Play, Pause, Download, ChevronDown, ChevronRight, Loader2, Lock, FolderDown, Music, Info, X } from 'lucide-react'
 import WaveSurfer from 'wavesurfer.js'
 import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
@@ -56,10 +56,12 @@ export default function SharedPlaylist() {
   const wsRef = useRef<WaveSurfer | null>(null)
   const waveContainerRef = useRef<HTMLDivElement | null>(null)
   const [playingUrl, setPlayingUrl] = useState<string | null>(null)
+  const [containerReady, setContainerReady] = useState(false)
   const [zipping, setZipping] = useState(false)
   const [zipProgress, setZipProgress] = useState('')
   const [artworkUrls, setArtworkUrls] = useState<Record<string, string>>({})
   const [playingArtwork, setPlayingArtwork] = useState<string | null>(null)
+  const [infoTrack, setInfoTrack] = useState<Track | null>(null)
 
   useEffect(() => {
     loadShare()
@@ -135,13 +137,23 @@ export default function SharedPlaylist() {
     await loadPlaylistData(share)
   }
 
+  const destroyWaveSurfer = useCallback(() => {
+    if (wsRef.current) {
+      try {
+        wsRef.current.pause()
+        wsRef.current.destroy()
+      } catch (e) {
+        console.error('Error destroying WaveSurfer:', e)
+      }
+      wsRef.current = null
+    }
+  }, [])
+
   const initWaveSurfer = useCallback((url: string) => {
     if (!waveContainerRef.current) return
 
-    if (wsRef.current) {
-      wsRef.current.destroy()
-      wsRef.current = null
-    }
+    // Always destroy existing instance first
+    destroyWaveSurfer()
 
     const ws = WaveSurfer.create({
       container: waveContainerRef.current,
@@ -172,28 +184,27 @@ export default function SharedPlaylist() {
     })
     ws.on('play', () => setIsPlaying(true))
     ws.on('pause', () => setIsPlaying(false))
-  }, [])
+  }, [destroyWaveSurfer])
 
-  // When playingUrl changes and container is already mounted, init
-  useEffect(() => {
-    if (playingUrl) initWaveSurfer(playingUrl)
-  }, [playingUrl, initWaveSurfer])
-
-  // Callback ref for first mount of the waveform container
+  // Callback ref - just store the ref and signal when ready
   const setWaveContainer = useCallback((node: HTMLDivElement | null) => {
     waveContainerRef.current = node
-    if (node && playingUrl) initWaveSurfer(playingUrl)
-  }, [playingUrl, initWaveSurfer])
+    setContainerReady(!!node)
+  }, [])
 
-  // Cleanup
+  // Single initialization point - when both URL and container are ready
+  useEffect(() => {
+    if (playingUrl && containerReady && waveContainerRef.current) {
+      initWaveSurfer(playingUrl)
+    }
+  }, [playingUrl, containerReady, initWaveSurfer])
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (wsRef.current) {
-        wsRef.current.destroy()
-        wsRef.current = null
-      }
+      destroyWaveSurfer()
     }
-  }, [])
+  }, [destroyWaveSurfer])
 
   const handlePlay = async (track: Track) => {
     if (playingTrack?.id === track.id) {
@@ -208,11 +219,7 @@ export default function SharedPlaylist() {
     }
 
     // Stop current track before switching
-    if (wsRef.current) {
-      wsRef.current.pause()
-      wsRef.current.destroy()
-      wsRef.current = null
-    }
+    destroyWaveSurfer()
 
     const path = track.storage_path || track.file_url
     if (!path) return
@@ -391,6 +398,13 @@ export default function SharedPlaylist() {
         {track.artist && <p className="text-xs text-zinc-500">{track.artist}</p>}
       </div>
       <span className="text-xs text-zinc-600 tabular-nums">{formatDuration(track.duration)}</span>
+      <button
+        onClick={() => setInfoTrack(track)}
+        className="text-zinc-600 hover:text-white transition-colors"
+        title="Track info"
+      >
+        <Info size={15} />
+      </button>
       {share!.allow_download && (
         <button
           onClick={() => handleDownload(track)}
@@ -527,6 +541,113 @@ export default function SharedPlaylist() {
             </div>
             {/* Full-width waveform */}
             <div ref={setWaveContainer} className="w-full" />
+          </div>
+        </div>
+      )}
+
+      {/* Track Info Modal */}
+      {infoTrack && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setInfoTrack(null)}>
+          <div className="bg-zinc-900 border border-zinc-700/50 rounded-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <h3 className="font-semibold text-white">Track Info</h3>
+              <button onClick={() => setInfoTrack(null)} className="text-zinc-400 hover:text-white transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {/* Artwork and Title */}
+              <div className="flex items-center gap-4 pb-3 border-b border-zinc-800">
+                <div className="w-16 h-16 rounded-lg bg-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
+                  {artworkUrls[infoTrack.id] ? (
+                    <img src={artworkUrls[infoTrack.id]} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Music size={24} className="text-zinc-600" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-medium text-white truncate">{infoTrack.title}</p>
+                  {infoTrack.artist && <p className="text-sm text-zinc-400">{infoTrack.artist}</p>}
+                </div>
+              </div>
+
+              {/* Metadata Grid */}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {infoTrack.album && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Album</p>
+                    <p className="text-zinc-200">{infoTrack.album}</p>
+                  </div>
+                )}
+                {infoTrack.year && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Year</p>
+                    <p className="text-zinc-200">{infoTrack.year}</p>
+                  </div>
+                )}
+                {infoTrack.genre && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Genre</p>
+                    <p className="text-zinc-200">{infoTrack.genre}</p>
+                  </div>
+                )}
+                {infoTrack.composer && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Composer</p>
+                    <p className="text-zinc-200">{infoTrack.composer}</p>
+                  </div>
+                )}
+                {infoTrack.publisher && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Publisher</p>
+                    <p className="text-zinc-200">{infoTrack.publisher}</p>
+                  </div>
+                )}
+                {infoTrack.bpm && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">BPM</p>
+                    <p className="text-zinc-200">{infoTrack.bpm}</p>
+                  </div>
+                )}
+                {infoTrack.key && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Key</p>
+                    <p className="text-zinc-200">{infoTrack.key}</p>
+                  </div>
+                )}
+                {infoTrack.isrc && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">ISRC</p>
+                    <p className="text-zinc-200 font-mono text-xs">{infoTrack.isrc}</p>
+                  </div>
+                )}
+                {infoTrack.copyright && (
+                  <div className="col-span-2">
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Copyright</p>
+                    <p className="text-zinc-200 text-xs">{infoTrack.copyright}</p>
+                  </div>
+                )}
+                {infoTrack.duration && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Duration</p>
+                    <p className="text-zinc-200">{formatDuration(infoTrack.duration)}</p>
+                  </div>
+                )}
+                {infoTrack.format && (
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-wide mb-0.5">Format</p>
+                    <p className="text-zinc-200 uppercase">{infoTrack.format}</p>
+                  </div>
+                )}
+              </div>
+
+              {infoTrack.comment && (
+                <div className="pt-3 border-t border-zinc-800">
+                  <p className="text-zinc-500 text-xs uppercase tracking-wide mb-1">Notes</p>
+                  <p className="text-zinc-300 text-sm">{infoTrack.comment}</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

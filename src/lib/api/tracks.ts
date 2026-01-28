@@ -18,6 +18,7 @@ interface ExtractedMetadata {
   year: number | null
   genre: string | null
   composer: string | null
+  publisher: string | null
   bpm: number | null
   key: string | null
   isrc: string | null
@@ -38,6 +39,7 @@ async function extractMetadata(file: File): Promise<ExtractedMetadata> {
       year: common.year,
       genre: common.genre,
       composer: common.composer,
+      label: common.label,
       bpm: common.bpm,
       key: common.key,
       isrc: common.isrc,
@@ -61,6 +63,7 @@ async function extractMetadata(file: File): Promise<ExtractedMetadata> {
       year: common.year || null,
       genre: common.genre?.join(', ') || null,
       composer: common.composer?.join(', ') || null,
+      publisher: common.label?.join(', ') || null,
       bpm: common.bpm || null,
       key: common.key || null,
       isrc: common.isrc?.[0] || null,
@@ -72,8 +75,8 @@ async function extractMetadata(file: File): Promise<ExtractedMetadata> {
     console.error('[extractMetadata] Error:', err)
     return {
       title: null, artist: null, album: null, year: null, genre: null,
-      composer: null, bpm: null, key: null, isrc: null, copyright: null,
-      comment: null, artworkBlob: null
+      composer: null, publisher: null, bpm: null, key: null, isrc: null,
+      copyright: null, comment: null, artworkBlob: null
     }
   }
 }
@@ -129,6 +132,7 @@ export async function uploadTrack(file: File, userId: string): Promise<Track> {
       year: metadata.year,
       genre: metadata.genre,
       composer: metadata.composer,
+      publisher: metadata.publisher,
       bpm: metadata.bpm,
       key: metadata.key,
       isrc: metadata.isrc,

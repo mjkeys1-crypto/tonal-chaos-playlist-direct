@@ -14,6 +14,7 @@ export interface Track {
   year: number | null
   genre: string | null
   composer: string | null
+  publisher: string | null
   bpm: number | null
   key: string | null
   isrc: string | null
