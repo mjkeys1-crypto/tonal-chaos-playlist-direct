@@ -28,6 +28,7 @@ export default function Login() {
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
+          <img src="/logo.png" alt="Tonal Chaos" className="w-24 h-24 mx-auto mb-4 object-contain" />
           <h1 className="text-2xl font-bold text-white">Tonal Chaos</h1>
           <p className="text-zinc-400 mt-1 text-sm">Sign in to manage your music</p>
         </div>

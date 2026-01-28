@@ -21,7 +21,10 @@ export default function Dashboard() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      <div className="flex items-center gap-4 mb-6">
+        <img src="/logo.png" alt="Tonal Chaos" className="w-10 h-10 object-contain" />
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
