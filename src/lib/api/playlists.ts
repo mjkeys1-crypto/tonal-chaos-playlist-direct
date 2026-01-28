@@ -102,3 +102,36 @@ export async function reorderPlaylistTracks(items: { id: string; position: numbe
       .eq('id', item.id)
   }
 }
+
+export async function addTracksToPlaylist(playlistId: string, trackIds: string[], sectionId: string | null) {
+  let startPos = 0
+  if (sectionId) {
+    const { data: sectionTracks } = await supabase
+      .from('playlist_tracks')
+      .select('position')
+      .eq('playlist_id', playlistId)
+      .eq('section_id', sectionId)
+      .order('position', { ascending: false })
+      .limit(1)
+    startPos = sectionTracks?.[0]?.position != null ? sectionTracks[0].position + 1 : 0
+  } else {
+    const { data: unsectioned } = await supabase
+      .from('playlist_tracks')
+      .select('position')
+      .eq('playlist_id', playlistId)
+      .is('section_id', null)
+      .order('position', { ascending: false })
+      .limit(1)
+    startPos = unsectioned?.[0]?.position != null ? unsectioned[0].position + 1 : 0
+  }
+
+  const rows = trackIds.map((trackId, i) => ({
+    playlist_id: playlistId,
+    track_id: trackId,
+    section_id: sectionId,
+    position: startPos + i,
+  }))
+
+  const { error } = await supabase.from('playlist_tracks').insert(rows)
+  if (error) throw error
+}

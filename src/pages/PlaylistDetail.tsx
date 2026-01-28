@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Share2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Music, Loader2, Play, Share2, Library, X } from 'lucide-react'
 import {
   getPlaylist, listSections, listPlaylistTracks, createSection, deleteSection,
   addTrackToPlaylist, removeTrackFromPlaylist, deletePlaylist, updatePlaylist,
@@ -26,13 +26,14 @@ export default function PlaylistDetail() {
   const [allTracks, setAllTracks] = useState<Track[]>([])
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [showAddTracks, setShowAddTracks] = useState<string | null>(null) // section ID or 'unsectioned'
   const [showAddSection, setShowAddSection] = useState(false)
   const [newSectionTitle, setNewSectionTitle] = useState('')
   const [newSectionEmoji, setNewSectionEmoji] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [showShare, setShowShare] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [libraryTarget, setLibraryTarget] = useState<string | null>(null) // section ID to add to, null = unsectioned
 
   const loadData = useCallback(async () => {
     if (!id) return
@@ -87,13 +88,12 @@ export default function PlaylistDetail() {
     loadData()
   }
 
-  const handleAddTrack = async (trackId: string, sectionId: string | null) => {
+  const handleAddTrackFromLibrary = async (trackId: string) => {
     if (!id) return
     const sectionTracks = playlistTracks.filter(pt =>
-      sectionId ? pt.section_id === sectionId : !pt.section_id
+      libraryTarget ? pt.section_id === libraryTarget : !pt.section_id
     )
-    await addTrackToPlaylist(id, trackId, sectionId, sectionTracks.length)
-    setShowAddTracks(null)
+    await addTrackToPlaylist(id, trackId, libraryTarget, sectionTracks.length)
     loadData()
   }
 
@@ -115,7 +115,12 @@ export default function PlaylistDetail() {
     setEditingTitle(false)
   }
 
-  // Get tracks not already in the playlist (for the add dialog)
+  const openLibrary = (sectionId: string | null) => {
+    setLibraryTarget(sectionId)
+    setShowLibrary(true)
+  }
+
+  // Tracks not already in the playlist
   const availableTracks = allTracks.filter(t => !playlistTracks.some(pt => pt.track_id === t.id))
 
   if (loading) {
@@ -163,7 +168,7 @@ export default function PlaylistDetail() {
           )
         })}
         <button
-          onClick={() => setShowAddTracks(sectionId || 'unsectioned')}
+          onClick={() => openLibrary(sectionId)}
           className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <Plus size={14} />
@@ -174,157 +179,191 @@ export default function PlaylistDetail() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
-      {/* Header */}
-      <button onClick={() => navigate('/playlists')} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white mb-4 transition-colors">
-        <ArrowLeft size={16} />
-        Back to Playlists
-      </button>
+    <div className="flex">
+      {/* Main content */}
+      <div className={`p-8 flex-1 max-w-3xl transition-all ${showLibrary ? 'mr-80' : ''}`}>
+        {/* Header */}
+        <button onClick={() => navigate('/playlists')} className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white mb-4 transition-colors">
+          <ArrowLeft size={16} />
+          Back to Playlists
+        </button>
 
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          {editingTitle ? (
-            <div className="flex items-center gap-2">
-              <input
-                value={titleDraft}
-                onChange={e => setTitleDraft(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSaveTitle()}
-                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-xl font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              />
-              <button onClick={handleSaveTitle} className="text-sm text-indigo-400 hover:text-indigo-300">Save</button>
-              <button onClick={() => setEditingTitle(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
-            </div>
-          ) : (
-            <h1
-              className="text-2xl font-bold cursor-pointer hover:text-zinc-300 transition-colors"
-              onClick={() => { setTitleDraft(playlist.title); setEditingTitle(true) }}
-            >
-              {playlist.title}
-            </h1>
-          )}
-          {playlist.client_name && (
-            <p className="text-sm text-zinc-400 mt-1">For {playlist.client_name}</p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowShare(true)} className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-sm px-3 py-2 rounded-lg transition-colors">
-            <Share2 size={14} />
-            Share
-          </button>
-          <button
-            onClick={handleDeletePlaylist}
-            className="text-zinc-500 hover:text-red-400 px-3 py-2 transition-colors"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-
-      {/* Sections */}
-      <div className="space-y-4">
-        {sections.map(section => (
-          <div key={section.id} className="border border-zinc-800 rounded-lg overflow-hidden">
-            <button
-              onClick={() => toggleSection(section.id)}
-              className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors text-left"
-            >
-              {expandedSections.has(section.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              <span className="text-base">
-                {section.emoji && <span className="mr-2">{section.emoji}</span>}
-                <span className="font-medium">{section.title}</span>
-              </span>
-              <span className="text-xs text-zinc-500 ml-auto">
-                {playlistTracks.filter(pt => pt.section_id === section.id).length} tracks
-              </span>
-              <button
-                onClick={e => { e.stopPropagation(); handleDeleteSection(section.id) }}
-                className="text-zinc-600 hover:text-red-400 ml-2 transition-colors"
-              >
-                <Trash2 size={14} />
-              </button>
-            </button>
-            {expandedSections.has(section.id) && (
-              <div className="px-4 py-2">
-                {renderTrackList(section.id)}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            {editingTitle ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={titleDraft}
+                  onChange={e => setTitleDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveTitle()}
+                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1 text-xl font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+                <button onClick={handleSaveTitle} className="text-sm text-indigo-400 hover:text-indigo-300">Save</button>
+                <button onClick={() => setEditingTitle(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
               </div>
+            ) : (
+              <h1
+                className="text-2xl font-bold cursor-pointer hover:text-zinc-300 transition-colors"
+                onClick={() => { setTitleDraft(playlist.title); setEditingTitle(true) }}
+              >
+                {playlist.title}
+              </h1>
+            )}
+            {playlist.client_name && (
+              <p className="text-sm text-zinc-400 mt-1">For {playlist.client_name}</p>
             )}
           </div>
-        ))}
-
-        {/* Unsectioned tracks */}
-        {playlistTracks.some(pt => !pt.section_id) && (
-          <div className="border border-zinc-800 rounded-lg p-4">
-            <p className="text-sm text-zinc-500 mb-2">Unsectioned</p>
-            {renderTrackList(null)}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowLibrary(!showLibrary)}
+              className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors ${
+                showLibrary ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-zinc-800 hover:bg-zinc-700'
+              }`}
+            >
+              <Library size={14} />
+              Track Library
+            </button>
+            <button onClick={() => setShowShare(true)} className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-sm px-3 py-2 rounded-lg transition-colors">
+              <Share2 size={14} />
+              Share
+            </button>
+            <button
+              onClick={handleDeletePlaylist}
+              className="text-zinc-500 hover:text-red-400 px-3 py-2 transition-colors"
+            >
+              <Trash2 size={16} />
+            </button>
           </div>
-        )}
+        </div>
 
-        {/* Add section */}
-        {showAddSection ? (
-          <form onSubmit={handleAddSection} className="border border-zinc-700 rounded-lg p-4 space-y-3">
-            <div className="flex gap-3">
-              <input
-                value={newSectionEmoji}
-                onChange={e => setNewSectionEmoji(e.target.value)}
-                placeholder="Emoji"
-                className="w-16 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-center text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <input
-                value={newSectionTitle}
-                onChange={e => setNewSectionTitle(e.target.value)}
-                placeholder="Section title (e.g. Horror)"
-                required
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                autoFocus
-              />
+        {/* Sections */}
+        <div className="space-y-4">
+          {sections.map(section => (
+            <div key={section.id} className="border border-zinc-800 rounded-lg overflow-hidden">
+              <button
+                onClick={() => toggleSection(section.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 transition-colors text-left"
+              >
+                {expandedSections.has(section.id) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                <span className="text-base">
+                  {section.emoji && <span className="mr-2">{section.emoji}</span>}
+                  <span className="font-medium">{section.title}</span>
+                </span>
+                <span className="text-xs text-zinc-500 ml-auto">
+                  {playlistTracks.filter(pt => pt.section_id === section.id).length} tracks
+                </span>
+                <button
+                  onClick={e => { e.stopPropagation(); handleDeleteSection(section.id) }}
+                  className="text-zinc-600 hover:text-red-400 ml-2 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </button>
+              {expandedSections.has(section.id) && (
+                <div className="px-4 py-2">
+                  {renderTrackList(section.id)}
+                </div>
+              )}
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowAddSection(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
-              <button type="submit" className="text-sm text-indigo-400 hover:text-indigo-300 font-medium">Add Section</button>
+          ))}
+
+          {/* Unsectioned tracks */}
+          {playlistTracks.some(pt => !pt.section_id) && (
+            <div className="border border-zinc-800 rounded-lg p-4">
+              <p className="text-sm text-zinc-500 mb-2">Unsectioned</p>
+              {renderTrackList(null)}
             </div>
-          </form>
-        ) : (
-          <button
-            onClick={() => setShowAddSection(true)}
-            className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            <Plus size={16} />
-            Add Section
-          </button>
+          )}
+
+          {/* Add section */}
+          {showAddSection ? (
+            <form onSubmit={handleAddSection} className="border border-zinc-700 rounded-lg p-4 space-y-3">
+              <div className="flex gap-3">
+                <input
+                  value={newSectionEmoji}
+                  onChange={e => setNewSectionEmoji(e.target.value)}
+                  placeholder="Emoji"
+                  className="w-16 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-center text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <input
+                  value={newSectionTitle}
+                  onChange={e => setNewSectionTitle(e.target.value)}
+                  placeholder="Section title (e.g. Horror)"
+                  required
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowAddSection(false)} className="text-sm text-zinc-500 hover:text-zinc-300">Cancel</button>
+                <button type="submit" className="text-sm text-indigo-400 hover:text-indigo-300 font-medium">Add Section</button>
+              </div>
+            </form>
+          ) : (
+            <button
+              onClick={() => setShowAddSection(true)}
+              className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <Plus size={16} />
+              Add Section
+            </button>
+          )}
+        </div>
+
+        {showShare && id && (
+          <ShareDialog playlistId={id} onClose={() => setShowShare(false)} />
         )}
       </div>
 
-      {/* Add track modal */}
-      {showAddTracks && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-md max-h-[70vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <h2 className="font-semibold">Add Track</h2>
-              <button onClick={() => setShowAddTracks(null)} className="text-zinc-400 hover:text-white text-sm">Close</button>
+      {/* Track Library Sidebar */}
+      {showLibrary && (
+        <div className="fixed right-0 top-0 bottom-0 w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col z-40">
+          <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+            <h2 className="font-semibold text-sm">Track Library</h2>
+            <button onClick={() => setShowLibrary(false)} className="text-zinc-400 hover:text-white">
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Section target selector */}
+          {sections.length > 0 && (
+            <div className="px-4 py-3 border-b border-zinc-800">
+              <p className="text-xs text-zinc-500 mb-2 uppercase tracking-wider">Add to</p>
+              <select
+                value={libraryTarget ?? ''}
+                onChange={e => setLibraryTarget(e.target.value || null)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Unsectioned</option>
+                {sections.map(sec => (
+                  <option key={sec.id} value={sec.id}>
+                    {sec.emoji ? `${sec.emoji} ` : ''}{sec.title}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div className="flex-1 overflow-auto p-2">
-              {availableTracks.length === 0 ? (
-                <p className="text-sm text-zinc-500 p-4 text-center">No available tracks. Upload some first.</p>
-              ) : (
-                availableTracks.map(track => (
-                  <button
-                    key={track.id}
-                    onClick={() => handleAddTrack(track.id, showAddTracks === 'unsectioned' ? null : showAddTracks)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 text-left transition-colors"
-                  >
-                    <Music size={14} className="text-zinc-500" />
-                    <span className="flex-1 text-sm truncate">{track.title}</span>
-                    <span className="text-xs text-zinc-500 tabular-nums">{formatDuration(track.duration)}</span>
-                  </button>
-                ))
-              )}
-            </div>
+          )}
+
+          <div className="flex-1 overflow-auto p-2">
+            {availableTracks.length === 0 ? (
+              <p className="text-sm text-zinc-500 p-4 text-center">All tracks are in this playlist.</p>
+            ) : (
+              availableTracks.map(track => (
+                <button
+                  key={track.id}
+                  onClick={() => handleAddTrackFromLibrary(track.id)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-zinc-800 text-left transition-colors group"
+                >
+                  <Music size={14} className="text-zinc-500 shrink-0" />
+                  <span className="flex-1 text-sm truncate">{track.title}</span>
+                  <span className="text-xs text-zinc-500 tabular-nums shrink-0">{formatDuration(track.duration)}</span>
+                  <Plus size={14} className="text-zinc-600 group-hover:text-indigo-400 shrink-0 transition-colors" />
+                </button>
+              ))
+            )}
           </div>
         </div>
-      )}
-      {showShare && id && (
-        <ShareDialog playlistId={id} onClose={() => setShowShare(false)} />
       )}
     </div>
   )
