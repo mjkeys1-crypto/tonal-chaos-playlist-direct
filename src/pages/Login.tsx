@@ -28,8 +28,11 @@ export default function Login() {
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <img src="/logo.png" alt="Tonal Chaos" className="w-24 h-24 mx-auto mb-4 object-contain" />
-          <h1 className="text-2xl font-bold tracking-wide uppercase bg-gradient-to-r from-zinc-200 via-blue-300 to-indigo-400 bg-clip-text text-transparent" style={{ fontFamily: 'Rajdhani, sans-serif' }}>Tonal Chaos</h1>
+          <img src="/logo.png" alt="Tonal Chaos Select" className="w-24 h-24 mx-auto mb-4 object-contain" />
+          <h1 className="text-2xl font-bold tracking-wide uppercase" style={{ fontFamily: 'Rajdhani, sans-serif' }}>
+            <span className="bg-gradient-to-r from-zinc-200 via-blue-300 to-indigo-400 bg-clip-text text-transparent">Tonal Chaos</span>
+            <span className="ml-2 text-white">Select</span>
+          </h1>
           <p className="text-zinc-400 mt-1 text-sm">Sign in to manage your music</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">

@@ -236,10 +236,12 @@ function PlaylistDetailPanel({
   playlistId,
   onClose,
   onPlaylistDeleted,
+  onPlaylistUpdated,
 }: {
   playlistId: string
   onClose: () => void
   onPlaylistDeleted: (id: string) => void
+  onPlaylistUpdated: (playlist: Playlist) => void
 }) {
   const { play, currentTrack, isPlaying, pause, resume } = usePlayer()
   const { user } = useAuth()
@@ -279,14 +281,6 @@ function PlaylistDetailPanel({
       if (saved) setUnsectionedLabelState(saved)
     }
   }, [playlistId])
-
-  // Wrapper to save to localStorage when label changes
-  const setUnsectionedLabel = (label: string) => {
-    setUnsectionedLabelState(label)
-    if (playlistId) {
-      localStorage.setItem(`unsectioned-label-${playlistId}`, label)
-    }
-  }
 
   // Convert unsectioned tracks into a real section
   const handleConvertToSection = async (title: string) => {
@@ -463,8 +457,9 @@ function PlaylistDetailPanel({
   const handleSaveTitle = async () => {
     if (!playlistId || !titleDraft.trim()) return
     await updatePlaylist(playlistId, { title: titleDraft.trim() })
-    setPlaylist(prev => prev ? { ...prev, title: titleDraft.trim() } : prev)
-    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, title: titleDraft.trim() } : p))
+    const updated = playlist ? { ...playlist, title: titleDraft.trim() } : null
+    setPlaylist(updated)
+    if (updated) onPlaylistUpdated(updated)
     setEditingTitle(false)
   }
 
@@ -472,8 +467,9 @@ function PlaylistDetailPanel({
     if (!playlistId) return
     const value = clientDraft.trim() || null
     await updatePlaylist(playlistId, { client_name: value })
-    setPlaylist(prev => prev ? { ...prev, client_name: value } : prev)
-    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, client_name: value } : p))
+    const updated = playlist ? { ...playlist, client_name: value } : null
+    setPlaylist(updated)
+    if (updated) onPlaylistUpdated(updated)
     setEditingClient(false)
   }
 
@@ -481,8 +477,9 @@ function PlaylistDetailPanel({
     if (!playlistId) return
     const value = descriptionDraft.trim() || null
     await updatePlaylist(playlistId, { description: value })
-    setPlaylist(prev => prev ? { ...prev, description: value } : prev)
-    setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, description: value } : p))
+    const updated = playlist ? { ...playlist, description: value } : null
+    setPlaylist(updated)
+    if (updated) onPlaylistUpdated(updated)
     setEditingDescription(false)
   }
 
@@ -1338,6 +1335,7 @@ export default function PlaylistsPage() {
             playlistId={selectedPlaylist}
             onClose={() => setSelectedPlaylist(null)}
             onPlaylistDeleted={handlePlaylistDeleted}
+            onPlaylistUpdated={(updated) => setPlaylists(prev => prev.map(p => p.id === updated.id ? updated : p))}
           />
         </div>
       ) : (

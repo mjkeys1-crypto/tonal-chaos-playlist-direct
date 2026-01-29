@@ -366,7 +366,7 @@ export default function SharedPlaylist() {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <div className="text-center">
-          <img src="/logo.png" alt="Tonal Chaos" className="w-16 h-16 mx-auto mb-4 object-contain" />
+          <img src="/logo.png" alt="Tonal Chaos Select" className="w-16 h-16 mx-auto mb-4 object-contain" />
           <p className="text-zinc-400 text-lg">{error}</p>
         </div>
       </div>
@@ -378,7 +378,7 @@ export default function SharedPlaylist() {
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4 relative">
         <AnimatedOrbs />
         <div className="w-full max-w-sm text-center relative z-10">
-          <img src="/logo.png" alt="Tonal Chaos" className="w-20 h-20 mx-auto mb-6 object-contain" />
+          <img src="/logo.png" alt="Tonal Chaos Select" className="w-20 h-20 mx-auto mb-6 object-contain" />
           <Lock className="mx-auto mb-4 text-zinc-500" size={32} />
           <h1 className="text-xl font-bold text-white mb-2">Password Required</h1>
           <p className="text-sm text-zinc-400 mb-6">This playlist is password protected.</p>
@@ -408,7 +408,7 @@ export default function SharedPlaylist() {
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center px-4 relative">
         <AnimatedOrbs />
         <div className="w-full max-w-sm text-center relative z-10">
-          <img src="/logo.png" alt="Tonal Chaos" className="w-20 h-20 mx-auto mb-6 object-contain" />
+          <img src="/logo.png" alt="Tonal Chaos Select" className="w-20 h-20 mx-auto mb-6 object-contain" />
           <Mail className="mx-auto mb-4 text-zinc-500" size={32} />
           <h1 className="text-xl font-bold text-white mb-2">Enter Your Email</h1>
           <p className="text-sm text-zinc-400 mb-6">Please enter your email to access this playlist.</p>
@@ -501,8 +501,11 @@ export default function SharedPlaylist() {
         <AnimatedOrbs />
         <div className="relative z-10 max-w-2xl mx-auto px-6 pt-10 pb-8">
           <div className="flex items-center gap-3 mb-6">
-            <img src="/logo.png" alt="Tonal Chaos" className="w-10 h-10 object-contain" />
-            <span className="text-xs uppercase tracking-[0.25em] font-semibold bg-gradient-to-r from-zinc-200 via-blue-300 to-indigo-400 bg-clip-text text-transparent" style={{ fontFamily: 'Rajdhani, sans-serif' }}>Tonal Chaos</span>
+            <img src="/logo.png" alt="Tonal Chaos Select" className="w-10 h-10 object-contain" />
+            <span className="text-xs uppercase tracking-[0.25em] font-semibold" style={{ fontFamily: 'Rajdhani, sans-serif' }}>
+              <span className="bg-gradient-to-r from-zinc-200 via-blue-300 to-indigo-400 bg-clip-text text-transparent">Tonal Chaos</span>
+              <span className="ml-1.5 text-white">Select</span>
+            </span>
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">
             {playlist.client_name ? `Music for ${playlist.client_name}` : playlist.title}
@@ -584,7 +587,7 @@ export default function SharedPlaylist() {
 
       {/* Footer */}
       <footer className={`text-center py-8 text-xs text-zinc-700 ${playingTrack ? 'pb-24' : ''}`}>
-        <span style={{ fontFamily: 'Rajdhani, sans-serif' }}>Shared via Tonal Chaos</span>
+        <span style={{ fontFamily: 'Rajdhani, sans-serif' }}>Shared via Tonal Chaos Select</span>
       </footer>
 
       {/* Now Playing Bar */}

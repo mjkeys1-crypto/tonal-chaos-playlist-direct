@@ -78,3 +78,74 @@ export async function getShareAnalytics(shareId: string) {
     downloads: downloads.data || [],
   }
 }
+
+export interface ActivityNotification {
+  id: string
+  type: 'view' | 'play' | 'download'
+  email: string | null
+  trackTitle?: string
+  shareLabel: string
+  playlistTitle?: string
+  timestamp: string
+}
+
+export async function getRecentActivity(limit = 20): Promise<ActivityNotification[]> {
+  const [views, plays, downloads] = await Promise.all([
+    supabase
+      .from('analytics_events')
+      .select('id, created_at, metadata, share_link:share_links(slug, label, playlist:playlists(title))')
+      .eq('event_type', 'page_view')
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    supabase
+      .from('play_events')
+      .select('id, created_at, listener_email, track:tracks(title), share_link:share_links(slug, label)')
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    supabase
+      .from('download_events')
+      .select('id, created_at, listener_email, track:tracks(title), share_link:share_links(slug, label)')
+      .order('created_at', { ascending: false })
+      .limit(limit),
+  ])
+
+  const activities: ActivityNotification[] = []
+
+  for (const v of views.data || []) {
+    activities.push({
+      id: `view-${v.id}`,
+      type: 'view',
+      email: (v.metadata as any)?.listener_email || null,
+      shareLabel: (v.share_link as any)?.label || (v.share_link as any)?.slug || 'Unknown',
+      playlistTitle: (v.share_link as any)?.playlist?.title,
+      timestamp: v.created_at,
+    })
+  }
+
+  for (const p of plays.data || []) {
+    activities.push({
+      id: `play-${p.id}`,
+      type: 'play',
+      email: p.listener_email,
+      trackTitle: (p.track as any)?.title,
+      shareLabel: (p.share_link as any)?.label || (p.share_link as any)?.slug || 'Unknown',
+      timestamp: p.created_at,
+    })
+  }
+
+  for (const d of downloads.data || []) {
+    activities.push({
+      id: `download-${d.id}`,
+      type: 'download',
+      email: d.listener_email,
+      trackTitle: (d.track as any)?.title,
+      shareLabel: (d.share_link as any)?.label || (d.share_link as any)?.slug || 'Unknown',
+      timestamp: d.created_at,
+    })
+  }
+
+  // Sort by timestamp descending
+  activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+  return activities.slice(0, limit)
+}
