@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Using main Tonal Chaos Database Supabase (Pro plan)
+// All playlist tables are prefixed with 'pd_' to avoid conflicts
 export const supabase = createClient(
-  'https://qqhvolzqccyyhetmrfnx.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxaHZvbHpxY2N5eWhldG1yZm54Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NjY5MDAsImV4cCI6MjA4NTE0MjkwMH0.wAKIelaZ4n_amjrioJfkuU_MFPk6eKhSpBGFX-7TRnk'
+  'https://guzthooxrcuomkdjzmvy.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd1enRob294cmN1b21rZGp6bXZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDU4NjEsImV4cCI6MjA4MjUyMTg2MX0.cGt_3K3C7jP2bKI12RhO3CJSURSZtx9ZcoZRaLELyRw'
 )

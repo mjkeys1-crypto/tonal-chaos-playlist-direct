@@ -4,7 +4,7 @@ import { parseBlob } from 'music-metadata-browser'
 
 export async function listTracks(): Promise<Track[]> {
   const { data, error } = await supabase
-    .from('tracks')
+    .from('pd_tracks')
     .select('*')
     .order('created_at', { ascending: false })
   if (error) throw error
@@ -94,7 +94,7 @@ export async function uploadTrack(file: File, userId: string): Promise<Track> {
 
   // Upload audio file to storage
   const { error: uploadError } = await supabase.storage
-    .from('tracks')
+    .from('pd-tracks')
     .upload(storagePath, file)
   if (uploadError) throw uploadError
 
@@ -105,7 +105,7 @@ export async function uploadTrack(file: File, userId: string): Promise<Track> {
     artworkPath = `track-artwork/${trackId}.${artExt}`
     console.log('[uploadTrack] Uploading artwork to:', artworkPath)
     const { error: artworkError } = await supabase.storage
-      .from('tracks')
+      .from('pd-tracks')
       .upload(artworkPath, metadata.artworkBlob, { upsert: true })
     if (artworkError) {
       console.error('[uploadTrack] Artwork upload error:', artworkError)
@@ -124,7 +124,7 @@ export async function uploadTrack(file: File, userId: string): Promise<Track> {
   // Insert track record
   console.log('[uploadTrack] Inserting track with artwork_path:', artworkPath)
   const { data, error } = await supabase
-    .from('tracks')
+    .from('pd_tracks')
     .insert({
       title,
       artist: metadata.artist,
@@ -161,7 +161,7 @@ export async function deleteTrack(id: string, storagePath: string | null, artwor
 
   // First, remove any playlist_tracks references
   const { error: ptError } = await supabase
-    .from('playlist_tracks')
+    .from('pd_playlist_tracks')
     .delete()
     .eq('track_id', id)
   console.log('[deleteTrack] Playlist tracks delete error:', ptError)
@@ -169,19 +169,19 @@ export async function deleteTrack(id: string, storagePath: string | null, artwor
 
   // Delete from storage
   if (storagePath) {
-    const { error: storageError } = await supabase.storage.from('tracks').remove([storagePath])
+    const { error: storageError } = await supabase.storage.from('pd-tracks').remove([storagePath])
     console.log('[deleteTrack] Storage delete:', storagePath, storageError)
   }
 
   // Delete artwork from storage if exists
   if (artworkPath) {
-    const { error: artworkError } = await supabase.storage.from('tracks').remove([artworkPath])
+    const { error: artworkError } = await supabase.storage.from('pd-tracks').remove([artworkPath])
     console.log('[deleteTrack] Artwork delete:', artworkPath, artworkError)
   }
 
   // Delete track record
   const { error } = await supabase
-    .from('tracks')
+    .from('pd_tracks')
     .delete()
     .eq('id', id)
   console.log('[deleteTrack] Track delete error:', error)
@@ -189,7 +189,7 @@ export async function deleteTrack(id: string, storagePath: string | null, artwor
   if (error) throw new Error(`Delete failed: ${error.message} (code: ${error.code})`)
 
   // Verify deletion
-  const { data: check } = await supabase.from('tracks').select('id').eq('id', id).single()
+  const { data: check } = await supabase.from('pd_tracks').select('id').eq('id', id).single()
   if (check) {
     throw new Error('Track still exists after delete - RLS policy blocking deletion. Check Supabase policies.')
   }
@@ -197,7 +197,7 @@ export async function deleteTrack(id: string, storagePath: string | null, artwor
 
 export async function getSignedUrl(storagePath: string): Promise<string> {
   const { data, error } = await supabase.storage
-    .from('tracks')
+    .from('pd_tracks')
     .createSignedUrl(storagePath, 3600)
   if (error) throw error
   return data.signedUrl
@@ -205,7 +205,7 @@ export async function getSignedUrl(storagePath: string): Promise<string> {
 
 export async function getTrackArtworkUrl(artworkPath: string): Promise<string> {
   const { data, error } = await supabase.storage
-    .from('tracks')
+    .from('pd_tracks')
     .createSignedUrl(artworkPath, 3600)
   if (error) throw error
   return data.signedUrl

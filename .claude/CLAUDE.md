@@ -1,5 +1,10 @@
 # Tonal Chaos Playlist Sharing App
 
+## 📖 Memory System
+**FIRST:** Read `/Users/marcjacobs/.claude/~MARC_MEMORY.md` to understand Marc, his projects, work style, and our collaboration history.
+
+---
+
 A professional music licensing and playlist sharing platform for Tonal Chaos. Music supervisors, composers, and clients can share curated playlists with secure, trackable share links.
 
 ## Tech Stack

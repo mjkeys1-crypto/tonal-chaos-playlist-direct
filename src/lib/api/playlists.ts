@@ -3,7 +3,7 @@ import type { Playlist, Section, PlaylistTrack } from '../types'
 
 export async function listPlaylists(): Promise<Playlist[]> {
   const { data, error } = await supabase
-    .from('playlists')
+    .from('pd_playlists')
     .select('*')
     .order('created_at', { ascending: false })
   if (error) throw error
@@ -12,7 +12,7 @@ export async function listPlaylists(): Promise<Playlist[]> {
 
 export async function getPlaylist(id: string): Promise<Playlist> {
   const { data, error } = await supabase
-    .from('playlists')
+    .from('pd_playlists')
     .select('*')
     .eq('id', id)
     .single()
@@ -22,7 +22,7 @@ export async function getPlaylist(id: string): Promise<Playlist> {
 
 export async function createPlaylist(title: string, clientName: string | null, description: string | null, ownerId: string): Promise<Playlist> {
   const { data, error } = await supabase
-    .from('playlists')
+    .from('pd_playlists')
     .insert({ title, client_name: clientName, description, owner_id: ownerId })
     .select()
     .single()
@@ -31,7 +31,7 @@ export async function createPlaylist(title: string, clientName: string | null, d
 }
 
 export async function updatePlaylist(id: string, updates: Partial<Pick<Playlist, 'title' | 'description' | 'client_name' | 'artwork_path'>>) {
-  const { error } = await supabase.from('playlists').update(updates).eq('id', id)
+  const { error } = await supabase.from('pd_playlists').update(updates).eq('id', id)
   if (error) throw error
 }
 
@@ -41,7 +41,7 @@ export async function uploadPlaylistArtwork(playlistId: string, file: File): Pro
 
   // Upload to storage
   const { error: uploadError } = await supabase.storage
-    .from('tracks')
+    .from('pd-tracks')
     .upload(path, file, { upsert: true })
   if (uploadError) throw uploadError
 
@@ -52,7 +52,7 @@ export async function uploadPlaylistArtwork(playlistId: string, file: File): Pro
 }
 
 export async function getArtworkUrl(path: string): Promise<string> {
-  const { data, error } = await supabase.storage.from('tracks').createSignedUrl(path, 3600)
+  const { data, error } = await supabase.storage.from('pd-tracks').createSignedUrl(path, 3600)
   if (error) throw error
   return data.signedUrl
 }
@@ -62,32 +62,32 @@ export async function deletePlaylist(id: string) {
 
   // Delete related data first (but NOT the actual tracks)
   // Delete share links and their related analytics
-  const { data: shares } = await supabase.from('share_links').select('id').eq('playlist_id', id)
+  const { data: shares } = await supabase.from('pd_share_links').select('id').eq('playlist_id', id)
   if (shares && shares.length > 0) {
     const shareIds = shares.map(s => s.id)
     console.log('[deletePlaylist] Deleting analytics for shares:', shareIds)
-    await supabase.from('analytics_events').delete().in('share_link_id', shareIds)
-    await supabase.from('play_events').delete().in('share_id', shareIds)
-    await supabase.from('download_events').delete().in('share_id', shareIds)
-    await supabase.from('share_recipients').delete().in('share_id', shareIds)
-    await supabase.from('share_links').delete().eq('playlist_id', id)
+    await supabase.from('pd_analytics_events').delete().in('share_link_id', shareIds)
+    await supabase.from('pd_play_events').delete().in('share_id', shareIds)
+    await supabase.from('pd_download_events').delete().in('share_id', shareIds)
+    await supabase.from('pd_share_recipients').delete().in('share_id', shareIds)
+    await supabase.from('pd_share_links').delete().eq('playlist_id', id)
   }
 
   // Delete sections and playlist_tracks
   console.log('[deletePlaylist] Deleting playlist_tracks and sections')
-  await supabase.from('playlist_tracks').delete().eq('playlist_id', id)
-  await supabase.from('sections').delete().eq('playlist_id', id)
+  await supabase.from('pd_playlist_tracks').delete().eq('playlist_id', id)
+  await supabase.from('pd_sections').delete().eq('playlist_id', id)
 
   // Delete playlist artwork from storage if exists
-  const { data: playlist } = await supabase.from('playlists').select('artwork_path').eq('id', id).single()
+  const { data: playlist } = await supabase.from('pd_playlists').select('artwork_path').eq('id', id).single()
   if (playlist?.artwork_path) {
-    await supabase.storage.from('tracks').remove([playlist.artwork_path])
+    await supabase.storage.from('pd-tracks').remove([playlist.artwork_path])
   }
 
   // Finally delete the playlist
   console.log('[deletePlaylist] Deleting playlist record')
   const { error, count } = await supabase
-    .from('playlists')
+    .from('pd_playlists')
     .delete({ count: 'exact' })
     .eq('id', id)
 
@@ -101,8 +101,8 @@ export async function deletePlaylist(id: string) {
 // Get playlists that contain specific tracks
 export async function getPlaylistsContainingTracks(trackIds: string[]): Promise<{ trackId: string, playlistTitle: string }[]> {
   const { data, error } = await supabase
-    .from('playlist_tracks')
-    .select('track_id, playlist:playlists(title)')
+    .from('pd_playlist_tracks')
+    .select('track_id, playlist:pd_playlists(title)')
     .in('track_id', trackIds)
   if (error) throw error
 
@@ -118,7 +118,7 @@ export async function duplicatePlaylist(id: string, ownerId: string): Promise<Pl
 
   // Create new playlist with (Copy) suffix
   const { data: newPlaylist, error: plError } = await supabase
-    .from('playlists')
+    .from('pd_playlists')
     .insert({
       title: `${original.title} (Copy)`,
       client_name: original.client_name,
@@ -135,7 +135,7 @@ export async function duplicatePlaylist(id: string, ownerId: string): Promise<Pl
 
   for (const sec of originalSections) {
     const { data: newSec, error: secError } = await supabase
-      .from('sections')
+      .from('pd_sections')
       .insert({
         playlist_id: newPlaylist.id,
         title: sec.title,
@@ -157,7 +157,7 @@ export async function duplicatePlaylist(id: string, ownerId: string): Promise<Pl
       section_id: pt.section_id ? sectionMap.get(pt.section_id) || null : null,
       position: pt.position,
     }))
-    const { error: trackError } = await supabase.from('playlist_tracks').insert(newTracks)
+    const { error: trackError } = await supabase.from('pd_playlist_tracks').insert(newTracks)
     if (trackError) throw trackError
   }
 
@@ -167,7 +167,7 @@ export async function duplicatePlaylist(id: string, ownerId: string): Promise<Pl
 // Sections
 export async function listSections(playlistId: string): Promise<Section[]> {
   const { data, error } = await supabase
-    .from('sections')
+    .from('pd_sections')
     .select('*')
     .eq('playlist_id', playlistId)
     .order('position')
@@ -177,7 +177,7 @@ export async function listSections(playlistId: string): Promise<Section[]> {
 
 export async function createSection(playlistId: string, title: string, emoji: string | null, position: number): Promise<Section> {
   const { data, error } = await supabase
-    .from('sections')
+    .from('pd_sections')
     .insert({ playlist_id: playlistId, title, emoji, position })
     .select()
     .single()
@@ -186,20 +186,20 @@ export async function createSection(playlistId: string, title: string, emoji: st
 }
 
 export async function updateSection(id: string, updates: Partial<Pick<Section, 'title' | 'emoji' | 'position'>>) {
-  const { error } = await supabase.from('sections').update(updates).eq('id', id)
+  const { error } = await supabase.from('pd_sections').update(updates).eq('id', id)
   if (error) throw error
 }
 
 export async function deleteSection(id: string) {
-  const { error } = await supabase.from('sections').delete().eq('id', id)
+  const { error } = await supabase.from('pd_sections').delete().eq('id', id)
   if (error) throw error
 }
 
 // Playlist tracks
 export async function listPlaylistTracks(playlistId: string): Promise<PlaylistTrack[]> {
   const { data, error } = await supabase
-    .from('playlist_tracks')
-    .select('*, track:tracks(*)')
+    .from('pd_playlist_tracks')
+    .select('*, track:pd_tracks(*)')
     .eq('playlist_id', playlistId)
     .order('position')
   if (error) throw error
@@ -208,20 +208,20 @@ export async function listPlaylistTracks(playlistId: string): Promise<PlaylistTr
 
 export async function addTrackToPlaylist(playlistId: string, trackId: string, sectionId: string | null, position: number) {
   const { error } = await supabase
-    .from('playlist_tracks')
+    .from('pd_playlist_tracks')
     .insert({ playlist_id: playlistId, track_id: trackId, section_id: sectionId, position })
   if (error) throw error
 }
 
 export async function removeTrackFromPlaylist(id: string) {
-  const { error } = await supabase.from('playlist_tracks').delete().eq('id', id)
+  const { error } = await supabase.from('pd_playlist_tracks').delete().eq('id', id)
   if (error) throw error
 }
 
 export async function reorderPlaylistTracks(items: { id: string; position: number; section_id: string | null }[]) {
   for (const item of items) {
     await supabase
-      .from('playlist_tracks')
+      .from('pd_playlist_tracks')
       .update({ position: item.position, section_id: item.section_id })
       .eq('id', item.id)
   }
@@ -231,7 +231,7 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
   let startPos = 0
   if (sectionId) {
     const { data: sectionTracks } = await supabase
-      .from('playlist_tracks')
+      .from('pd_playlist_tracks')
       .select('position')
       .eq('playlist_id', playlistId)
       .eq('section_id', sectionId)
@@ -240,7 +240,7 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
     startPos = sectionTracks?.[0]?.position != null ? sectionTracks[0].position + 1 : 0
   } else {
     const { data: unsectioned } = await supabase
-      .from('playlist_tracks')
+      .from('pd_playlist_tracks')
       .select('position')
       .eq('playlist_id', playlistId)
       .is('section_id', null)
@@ -256,6 +256,6 @@ export async function addTracksToPlaylist(playlistId: string, trackIds: string[]
     position: startPos + i,
   }))
 
-  const { error } = await supabase.from('playlist_tracks').insert(rows)
+  const { error } = await supabase.from('pd_playlist_tracks').insert(rows)
   if (error) throw error
 }

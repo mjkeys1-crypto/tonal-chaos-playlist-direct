@@ -2,11 +2,11 @@ import { supabase } from '../supabase'
 
 export async function getOverviewStats() {
   const [tracks, playlists, shares, plays, downloads] = await Promise.all([
-    supabase.from('tracks').select('id', { count: 'exact', head: true }),
-    supabase.from('playlists').select('id', { count: 'exact', head: true }),
-    supabase.from('share_links').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    supabase.from('play_events').select('id', { count: 'exact', head: true }),
-    supabase.from('download_events').select('id', { count: 'exact', head: true }),
+    supabase.from('pd_tracks').select('id', { count: 'exact', head: true }),
+    supabase.from('pd_playlists').select('id', { count: 'exact', head: true }),
+    supabase.from('pd_share_links').select('id', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('pd_play_events').select('id', { count: 'exact', head: true }),
+    supabase.from('pd_download_events').select('id', { count: 'exact', head: true }),
   ])
   return {
     tracks: tracks.count || 0,
@@ -19,8 +19,8 @@ export async function getOverviewStats() {
 
 export async function getRecentPlays(limit = 50) {
   const { data, error } = await supabase
-    .from('play_events')
-    .select('*, track:tracks(title), share_link:share_links(slug, label)')
+    .from('pd_play_events')
+    .select('*, track:pd_tracks(title), share_link:pd_share_links(slug, label)')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw error
@@ -29,8 +29,8 @@ export async function getRecentPlays(limit = 50) {
 
 export async function getPlaysByTrack() {
   const { data, error } = await supabase
-    .from('play_events')
-    .select('track_id, track:tracks(title)')
+    .from('pd_play_events')
+    .select('track_id, track:pd_tracks(title)')
   if (error) throw error
 
   // Count plays per track
@@ -49,8 +49,8 @@ export async function getPlaysByTrack() {
 
 export async function getPageViews(limit = 50) {
   const { data, error } = await supabase
-    .from('analytics_events')
-    .select('*, share_link:share_links(slug, label, playlist_id, playlist:playlists(title))')
+    .from('pd_analytics_events')
+    .select('*, share_link:pd_share_links(slug, label, playlist_id, playlist:pd_playlists(title))')
     .eq('event_type', 'page_view')
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -60,8 +60,8 @@ export async function getPageViews(limit = 50) {
 
 export async function getRecentDownloads(limit = 50) {
   const { data, error } = await supabase
-    .from('download_events')
-    .select('*, track:tracks(title), share_link:share_links(slug, label)')
+    .from('pd_download_events')
+    .select('*, track:pd_tracks(title), share_link:pd_share_links(slug, label)')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw error
@@ -70,8 +70,8 @@ export async function getRecentDownloads(limit = 50) {
 
 export async function getShareAnalytics(shareId: string) {
   const [plays, downloads] = await Promise.all([
-    supabase.from('play_events').select('*, track:tracks(title)').eq('share_id', shareId).order('created_at', { ascending: false }),
-    supabase.from('download_events').select('*, track:tracks(title)').eq('share_id', shareId).order('created_at', { ascending: false }),
+    supabase.from('pd_play_events').select('*, track:pd_tracks(title)').eq('share_id', shareId).order('created_at', { ascending: false }),
+    supabase.from('pd_download_events').select('*, track:pd_tracks(title)').eq('share_id', shareId).order('created_at', { ascending: false }),
   ])
   return {
     plays: plays.data || [],
@@ -92,19 +92,19 @@ export interface ActivityNotification {
 export async function getRecentActivity(limit = 20): Promise<ActivityNotification[]> {
   const [views, plays, downloads] = await Promise.all([
     supabase
-      .from('analytics_events')
-      .select('id, created_at, metadata, share_link:share_links(slug, label, playlist:playlists(title))')
+      .from('pd_analytics_events')
+      .select('id, created_at, metadata, share_link:pd_share_links(slug, label, playlist:pd_playlists(title))')
       .eq('event_type', 'page_view')
       .order('created_at', { ascending: false })
       .limit(limit),
     supabase
-      .from('play_events')
-      .select('id, created_at, listener_email, track:tracks(title), share_link:share_links(slug, label)')
+      .from('pd_play_events')
+      .select('id, created_at, listener_email, track:pd_tracks(title), share_link:pd_share_links(slug, label)')
       .order('created_at', { ascending: false })
       .limit(limit),
     supabase
-      .from('download_events')
-      .select('id, created_at, listener_email, track:tracks(title), share_link:share_links(slug, label)')
+      .from('pd_download_events')
+      .select('id, created_at, listener_email, track:pd_tracks(title), share_link:pd_share_links(slug, label)')
       .order('created_at', { ascending: false })
       .limit(limit),
   ])

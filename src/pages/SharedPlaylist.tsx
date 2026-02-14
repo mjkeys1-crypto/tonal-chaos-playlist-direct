@@ -77,8 +77,8 @@ export default function SharedPlaylist() {
   const loadShare = async () => {
     try {
       const { data, error: err } = await supabase
-        .from('share_links')
-        .select('*, playlist:playlists(*)')
+        .from('pd_share_links')
+        .select('*, playlist:pd_playlists(*)')
         .eq('slug', token)
         .eq('is_active', true)
         .single()
@@ -116,8 +116,8 @@ export default function SharedPlaylist() {
   const loadPlaylistData = async (shareData: ShareData, email?: string) => {
     const playlistId = shareData.playlist.id
     const [secs, pts] = await Promise.all([
-      supabase.from('sections').select('*').eq('playlist_id', playlistId).order('position'),
-      supabase.from('playlist_tracks').select('*, track:tracks(*)').eq('playlist_id', playlistId).order('position'),
+      supabase.from('pd_sections').select('*').eq('playlist_id', playlistId).order('position'),
+      supabase.from('pd_playlist_tracks').select('*, track:pd_tracks(*)').eq('playlist_id', playlistId).order('position'),
     ])
     setShare(shareData)
     setSections(secs.data || [])
@@ -132,7 +132,7 @@ export default function SharedPlaylist() {
     await Promise.all(
       tracks.filter(t => t.artwork_path).map(async (t) => {
         try {
-          const { data } = await supabase.storage.from('tracks').createSignedUrl(t.artwork_path!, 3600)
+          const { data } = await supabase.storage.from('pd-tracks').createSignedUrl(t.artwork_path!, 3600)
           if (data) artworkMap[t.id] = data.signedUrl
         } catch {}
       })
@@ -140,7 +140,7 @@ export default function SharedPlaylist() {
     setArtworkUrls(artworkMap)
 
     // Log page view
-    supabase.from('analytics_events').insert({
+    supabase.from('pd_analytics_events').insert({
       event_type: 'page_view',
       share_link_id: shareData.id,
       metadata: { user_agent: navigator.userAgent, listener_email: email || null },
@@ -270,7 +270,7 @@ export default function SharedPlaylist() {
     const path = track.storage_path || track.file_url
     if (!path) return
 
-    const { data } = await supabase.storage.from('tracks').createSignedUrl(path, 3600)
+    const { data } = await supabase.storage.from('pd-tracks').createSignedUrl(path, 3600)
     if (!data) return
 
     setPlayingTrack(track)
@@ -278,7 +278,7 @@ export default function SharedPlaylist() {
     setPlayingUrl(data.signedUrl)
     setPlayingArtwork(artworkUrls[track.id] || null)
 
-    supabase.from('play_events').insert({
+    supabase.from('pd_play_events').insert({
       track_id: track.id,
       share_id: share?.id,
       listener_email: listenerEmail,
@@ -289,7 +289,7 @@ export default function SharedPlaylist() {
   const handleDownload = async (track: Track) => {
     const path = track.storage_path || track.file_url
     if (!path) return
-    const { data } = await supabase.storage.from('tracks').createSignedUrl(path, 300)
+    const { data } = await supabase.storage.from('pd-tracks').createSignedUrl(path, 300)
     if (!data) return
 
     const res = await fetch(data.signedUrl)
@@ -303,7 +303,7 @@ export default function SharedPlaylist() {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 10000)
 
-    supabase.from('download_events').insert({
+    supabase.from('pd_download_events').insert({
       track_id: track.id,
       share_id: share?.id,
       listener_email: listenerEmail,
@@ -322,7 +322,7 @@ export default function SharedPlaylist() {
         setZipProgress(`Downloading ${i + 1} of ${tracks.length}...`)
         const path = track.storage_path || track.file_url
         if (!path) continue
-        const { data } = await supabase.storage.from('tracks').createSignedUrl(path, 300)
+        const { data } = await supabase.storage.from('pd-tracks').createSignedUrl(path, 300)
         if (!data) continue
         const res = await fetch(data.signedUrl)
         const blob = await res.blob()
